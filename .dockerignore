@@ -1,0 +1,8 @@
+target
+.git
+.github
+node_modules
+dist
+.env
+*.md
+assets
