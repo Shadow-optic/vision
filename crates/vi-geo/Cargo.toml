@@ -1,0 +1,8 @@
+[package]
+name = "vi-geo"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+h3o = { workspace = true }
+thiserror = { workspace = true }

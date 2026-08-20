@@ -1,0 +1,9 @@
+[package]
+name = "vi-lasm"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+handlebars = { workspace = true }
+serde = { workspace = true }
+thiserror = { workspace = true }
