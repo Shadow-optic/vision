@@ -113,4 +113,8 @@ crates/
 ├── vi-brady-recon/    Brady gap engine
 ├── vi-trial-penalty/  Trial Penalty Observatory
 └── vi-api/            Axum HTTP API
+worker/                Cloudflare Worker landing page (Workers Builds)
+wrangler.jsonc
 ```
+
+This GitHub repo is still connected to the Cloudflare Worker named `vision`. The Worker is a static landing page (no case data). It exists so **Workers Builds** can compile; the engines themselves run via `vi-api`.
