@@ -43,6 +43,13 @@ pub struct TrialPenaltySummary {
     pub mean_ratio: Option<f64>,
 }
 
+#[derive(Debug, Serialize, Default)]
+pub struct ConstitutionSummary {
+    pub jurisdiction: String,
+    pub hit_count: i64,
+    pub authority: String,
+}
+
 #[derive(Debug, Serialize)]
 pub struct EvidencePackage {
     pub caption: String,
@@ -52,6 +59,7 @@ pub struct EvidencePackage {
     pub brady_gaps: Vec<BradyGap>,
     pub monell: Option<MonellSummary>,
     pub trial_penalty: Option<TrialPenaltySummary>,
+    pub constitution: Option<ConstitutionSummary>,
 }
 
 const TEMPLATE: &str = r#"# Evidence Package — Attorney Work Product
@@ -89,6 +97,15 @@ _No office fingerprint available._
 **Office:** {{trial_penalty.office}} — **eligible cases:** {{trial_penalty.n}} — **mean trial/plea ratio:** {{trial_penalty.mean_ratio}}
 {{else}}
 _No trial-penalty snapshot available._
+{{/if}}
+
+## Constitutional Screen (advisory)
+{{#if constitution}}
+**Jurisdiction:** {{constitution.jurisdiction}} — **hits:** {{constitution.hit_count}} — **authority:** {{constitution.authority}}
+
+Hits are *research leads* from the native Constitution / Bill of Rights engine. They are not findings of constitutional violation and are not legal advice. Run POST /constitution/screen/:case_id and review GET /constitution/screen/:case_id.
+{{else}}
+_No constitution screen on file for this matter. Run POST /constitution/screen/:case_id first._
 {{/if}}
 
 ## Provenance (Root Ledger)
@@ -155,6 +172,11 @@ mod tests {
                 n: 2,
                 mean_ratio: Some(2.25),
             }),
+            constitution: Some(ConstitutionSummary {
+                jurisdiction: "CA".into(),
+                hit_count: 3,
+                authority: "unsettled".into(),
+            }),
         }
     }
 
@@ -168,5 +190,7 @@ mod tests {
         assert!(md.contains("Body-worn camera footage"));
         assert!(md.contains("Demo County DA"));
         assert!(md.contains("2.25"));
+        assert!(md.contains("Constitutional Screen"));
+        assert!(md.contains("CA"));
     }
 }

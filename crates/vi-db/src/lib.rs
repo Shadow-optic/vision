@@ -15,6 +15,8 @@ pub enum Error {
     Sqlx(#[from] sqlx::Error),
     #[error(transparent)]
     Migrate(#[from] sqlx::migrate::MigrateError),
+    #[error(transparent)]
+    Constitution(#[from] vi_constitution::db::Error),
 }
 
 pub async fn pool_from_env() -> Result<PgPool, Error> {
@@ -33,6 +35,7 @@ pub async fn pool_from_env() -> Result<PgPool, Error> {
 /// Embedded at compile time — no DATABASE_URL needed to *build*.
 pub async fn migrate(pool: &PgPool) -> Result<(), Error> {
     sqlx::migrate!("../../migrations").run(pool).await?;
+    vi_constitution::db::sync_native(pool).await?;
     Ok(())
 }
 
@@ -45,7 +48,7 @@ pub async fn ping(pool: &PgPool) -> Result<(), sqlx::Error> {
 /// `plea_sentence_ratio` = plea offer / actual trial sentence (only when the
 /// offer was rejected and a conviction followed — i.e., the coercion window).
 pub async fn case_context(pool: &PgPool, case_id: Uuid) -> Result<Option<Value>, sqlx::Error> {
-    sqlx::query_scalar::<_, Value>(
+    let ctx = sqlx::query_scalar::<_, Value>(
         r#"SELECT jsonb_build_object('case', jsonb_build_object(
              'case_id',            c.case_id,
              'docket_number',      c.docket_number,
@@ -77,5 +80,11 @@ pub async fn case_context(pool: &PgPool, case_id: Uuid) -> Result<Option<Value>,
     )
     .bind(case_id)
     .fetch_optional(pool)
-    .await
+    .await?;
+    if let Some(mut v) = ctx {
+        vi_constitution::attach_features(&mut v);
+        Ok(Some(v))
+    } else {
+        Ok(None)
+    }
 }

@@ -2436,6 +2436,7 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "vi-brady-recon",
+ "vi-constitution",
  "vi-correlation",
  "vi-db",
  "vi-geo",
@@ -2465,6 +2466,21 @@ dependencies = [
 ]
 
 [[package]]
+name = "vi-constitution"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "handlebars",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "uuid",
+ "vi-ledger",
+]
+
+[[package]]
 name = "vi-correlation"
 version = "0.1.0"
 dependencies = [
@@ -2479,6 +2495,7 @@ dependencies = [
  "sqlx",
  "thiserror 1.0.69",
  "uuid",
+ "vi-constitution",
 ]
 
 [[package]]

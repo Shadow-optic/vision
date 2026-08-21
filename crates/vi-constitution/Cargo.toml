@@ -1,0 +1,15 @@
+[package]
+name = "vi-constitution"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+blake3 = { workspace = true }
+chrono = { workspace = true }
+handlebars = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+vi-ledger = { path = "../vi-ledger" }

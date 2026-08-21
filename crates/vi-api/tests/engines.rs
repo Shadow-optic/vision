@@ -101,4 +101,33 @@ async fn trustscript_seed_rules_fire() {
     let rule = vi_trustscript::parse_rule(&src).unwrap();
     let flag = vi_trustscript::evaluate(&rule, &ctx).expect("plea-coercion should fire on seed");
     assert_eq!(flag.severity, vi_trustscript::Severity::High);
+
+    assert_eq!(ctx["constitution"]["circuit"], "CA9");
+    assert_eq!(
+        ctx["constitution"]["amend_06"]["trial_right_pressure"],
+        true
+    );
+    let sixth = sqlx::query_scalar::<_, String>(
+        "SELECT source FROM abuse_rules WHERE name='sixth-amendment-trial-pressure'",
+    )
+    .fetch_one(&pool)
+    .await
+    .unwrap();
+    let sixth_rule = vi_trustscript::parse_rule(&sixth).unwrap();
+    let sixth_flag = vi_trustscript::evaluate(&sixth_rule, &ctx).expect("sixth amendment rule");
+    assert_eq!(sixth_flag.severity, vi_trustscript::Severity::High);
+
+    let ledger = vi_ledger::Ledger::new(pool.clone());
+    let (id, report, md) = vi_constitution::db::screen_case(&pool, &ledger, case_id)
+        .await
+        .unwrap();
+    assert!(!id.is_nil());
+    assert!(report.hits.len() >= 2);
+    assert!(md.contains("not legal advice"));
+    let n: i64 =
+        sqlx::query_scalar("SELECT COUNT(*) FROM jurisdiction_circuits WHERE kind='state'")
+            .fetch_one(&pool)
+            .await
+            .unwrap();
+    assert_eq!(n, 50);
 }

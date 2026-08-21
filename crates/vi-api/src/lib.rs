@@ -1,6 +1,7 @@
 //! VisionInjustice HTTP API library. The `vi-api` binary is a thin wrapper.
 #![forbid(unsafe_code)]
 
+pub mod constitution;
 pub mod error;
 pub mod handlers;
 
@@ -63,5 +64,26 @@ pub fn router(state: AppState) -> Router {
         .route("/trial-penalty/heatmap", get(handlers::tp_heatmap))
         .route("/trial-penalty/disparity", get(handlers::tp_disparity))
         .route("/trial-penalty/motion", get(handlers::tp_motion))
+        .route("/constitution", get(constitution::catalog))
+        .route("/constitution/options", get(constitution::options))
+        .route(
+            "/constitution/jurisdictions",
+            get(constitution::jurisdictions),
+        )
+        .route(
+            "/constitution/provisions",
+            get(constitution::list_provisions),
+        )
+        .route(
+            "/constitution/provisions/:id",
+            get(constitution::get_provision),
+        )
+        .route("/constitution/clauses", get(constitution::list_clauses))
+        .route("/constitution/search", get(constitution::search))
+        .route("/constitution/resolve", post(constitution::resolve))
+        .route(
+            "/constitution/screen/:case_id",
+            get(constitution::screen_report).post(constitution::screen_run),
+        )
         .with_state(state)
 }

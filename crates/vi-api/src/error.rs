@@ -84,6 +84,30 @@ impl From<anyhow::Error> for ApiError {
         }
     }
 }
+impl From<vi_constitution::Error> for ApiError {
+    fn from(e: vi_constitution::Error) -> Self {
+        match e {
+            vi_constitution::Error::Resolve(r) => Self::bad_req(r.to_string()),
+            vi_constitution::Error::Db(d) => d.into(),
+            vi_constitution::Error::Render(r) => Self::internal(r),
+        }
+    }
+}
+impl From<vi_constitution::resolve::ResolveError> for ApiError {
+    fn from(e: vi_constitution::resolve::ResolveError) -> Self {
+        Self::bad_req(e.to_string())
+    }
+}
+impl From<vi_constitution::db::Error> for ApiError {
+    fn from(e: vi_constitution::db::Error) -> Self {
+        match e {
+            vi_constitution::db::Error::NotFound => Self::not_found(),
+            vi_constitution::db::Error::UnknownJurisdiction(s) => Self::bad_req(s),
+            vi_constitution::db::Error::Render(r) => Self::internal(r),
+            other => Self::internal(other),
+        }
+    }
+}
 impl From<serde_json::Error> for ApiError {
     fn from(e: serde_json::Error) -> Self {
         Self::bad_req(e.to_string())

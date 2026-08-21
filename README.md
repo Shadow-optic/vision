@@ -16,12 +16,13 @@ The API is an MVP that is compile-time database-URL-free (runtime-checked SQL), 
 | Zero-day sim | `vi-sim` | Seeded Monte Carlo; `POST /simulate/from-case/:id` calibrates priors from stored office stats |
 | H3 intelligence | `vi-geo` | Multi-res ladder at ingest; k-ring (`grid_disk`) disparity API |
 | Telemetry / ingest | `vi-ingest` | CourtListener + fixture sources, cursor checkpoints, API-triggered poll |
-| JIT LASM | `vi-lasm` | Evidence package: flags, Brady leads, Monell, trial-penalty, ledger provenance |
+| JIT LASM | `vi-lasm` | Evidence package: flags, Brady leads, Monell, trial-penalty, constitution screen, ledger provenance |
 | Monell atlas | `vi-monell-atlas` | Pattern-and-practice fingerprint + §1983 scaffold |
 | Brady recon | `vi-brady-recon` | Expected vs disclosed evidence; gaps are *leads* |
 | Trial penalty | `vi-trial-penalty` | Distributions, disparity OR, draft motion template |
+| Constitution / Bill of Rights | `vi-constitution` | Native corpus (Arts. I–VII + Amends. 1–27), 50-state dropdowns, stare-decisis resolver, advisory screens |
 
-`GET /engines` lists all twelve with live row counts.
+`GET /engines` lists all thirteen with live row counts.
 
 ## Quick start
 
@@ -32,7 +33,7 @@ export DATABASE_URL=postgres://postgres:postgres@localhost:5432/visioninjustice
 # pure tests — no DB required
 cargo test -p vi-ledger -p vi-correlation -p vi-trustscript -p vi-sim -p vi-geo \
            -p vi-lasm -p vi-tactics -p vi-ingest -p vi-monell-atlas -p vi-brady-recon \
-           -p vi-trial-penalty
+           -p vi-trial-penalty -p vi-constitution
 
 # with Postgres: applies migrations, then integration tests
 cargo test -p vi-api
@@ -93,6 +94,17 @@ curl -s 'localhost:8080/trial-penalty/disparity?group_a=Black&group_b=White&char
 
 # LASM evidence package (Markdown)
 curl -s 'localhost:8080/lasm/package/22222222-2222-2222-2222-222222222222'
+
+# Constitution / Bill of Rights (50-state dropdowns + advisory screen)
+curl -s localhost:8080/constitution
+curl -s localhost:8080/constitution/options
+curl -s 'localhost:8080/constitution/jurisdictions?kind=state'
+curl -s localhost:8080/constitution/provisions/amend.04
+curl -s -X POST localhost:8080/constitution/resolve \
+  -H 'content-type: application/json' \
+  -d '{"clause_id":"amend.04.search_seizure","jurisdiction":"CA","court_level":"superior"}'
+curl -s -X POST localhost:8080/constitution/screen/22222222-2222-2222-2222-222222222222
+curl -s localhost:8080/constitution/screen/22222222-2222-2222-2222-222222222222
 ```
 
 ## Production
@@ -105,7 +117,7 @@ Runs Postgres, `vi-api` on `:8080`, and `vi-ingest` (fixture source on a 300s lo
 
 - `GET /health` — liveness
 - `GET /ready` — database ping
-- `GET /engines` — twelve-engine catalog + row counts
+- `GET /engines` — thirteen-engine catalog + row counts
 - `BIND_ADDR` (default `0.0.0.0:8080`), `DATABASE_URL`, `DATABASE_MAX_CONNECTIONS`
 - Graceful shutdown on SIGINT/SIGTERM
 - Request tracing, 60s timeouts, permissive CORS (replace with an allow-list behind your gateway)
@@ -118,8 +130,9 @@ Runs Postgres, `vi-api` on `:8080`, and `vi-ingest` (fixture source on a 300s lo
 2. **Correlation ≠ causation** — every motion-facing statistic carries CI, *n*, and formula.
 3. **Simulator honesty** — `p_conviction` weights are a transparent prior model. `POST /simulate/from-case/:id` fills them from office/judge public-record rates; calibrate further from `vi-correlation` before citing.
 4. **Data licensing** — PACER fees/ToS; CourtListener/RECAP and state portals have their own terms. Race/ethnicity fields require counsel review.
-5. **UPL** — LASM / Monell / trial-penalty Markdown is attorney work product. The public portal stays informational.
+5. **UPL** — LASM / Monell / trial-penalty / constitution-screen Markdown is attorney work product. The public portal stays informational. Constitutional screens are **not legal advice** and never a finding of violation.
 6. **Lawful inputs only** — court opinions, dockets, public settlements, bar records, FOIA disclosures. Sealed, juvenile, expunged, and non-public records are excluded.
+7. **Incomplete holdings** — the Constitution text is complete (Preamble, Articles I–VII, Amendments 1–27). The interpretation snapshot is curated criminal-procedure doctrine plus 50-state charter analogs. Circuit splits stay `unsettled`. It is not a citator.
 
 ## Layout
 
@@ -137,6 +150,7 @@ crates/
 ├── vi-monell-atlas/   Pattern-and-practice atlas
 ├── vi-brady-recon/    Brady gap engine
 ├── vi-trial-penalty/  Trial Penalty Observatory
+├── vi-constitution/   U.S. Constitution + Bill of Rights + 50-state analogs
 └── vi-api/            Axum HTTP API
 worker/                Cloudflare Worker landing page (Workers Builds)
 wrangler.jsonc
