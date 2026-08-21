@@ -3,3 +3,65 @@
 
 pub mod error;
 pub mod handlers;
+
+use axum::{
+    routing::{get, post},
+    Router,
+};
+use handlers::AppState;
+
+pub fn router(state: AppState) -> Router {
+    Router::new()
+        .route("/health", get(handlers::health))
+        .route("/ready", get(handlers::ready))
+        .route("/engines", get(handlers::engines))
+        .route("/cases/search", get(handlers::search))
+        .route("/cases/:id", get(handlers::case_context))
+        .route("/prosecutors/:id/stats", get(handlers::prosecutor_stats))
+        .route("/geo/cells/:cell", get(handlers::cell_stats))
+        .route("/geo/kring/:cell", get(handlers::kring_stats))
+        .route(
+            "/rules",
+            get(handlers::list_rules).post(handlers::create_rule),
+        )
+        .route("/rules/run", post(handlers::run_rules))
+        .route("/flags", get(handlers::list_flags))
+        .route("/simulate", post(handlers::simulate))
+        .route(
+            "/simulate/from-case/:case_id",
+            post(handlers::simulate_from_case),
+        )
+        .route("/ledger/verify", get(handlers::verify_ledger))
+        .route("/stats/pearson", post(handlers::pearson))
+        .route("/stats/odds", post(handlers::odds))
+        .route("/stats/plea-sentence", get(handlers::plea_sentence_corr))
+        .route("/lasm/package/:case_id", get(handlers::lasm_package))
+        .route(
+            "/tactics",
+            get(handlers::list_tactics).post(handlers::create_tactic),
+        )
+        .route("/tactics/:id", get(handlers::get_tactic))
+        .route("/tactics/:id/stats", get(handlers::tactic_stats))
+        .route("/ingest/run", post(handlers::ingest_run))
+        .route("/ingest/status", get(handlers::ingest_status))
+        .route("/atlas/findings", post(handlers::atlas_create_finding))
+        .route(
+            "/atlas/findings/:id/review",
+            post(handlers::atlas_review_finding),
+        )
+        .route(
+            "/atlas/offices/fingerprint",
+            get(handlers::atlas_fingerprint),
+        )
+        .route("/atlas/offices/monell-report", get(handlers::atlas_report))
+        .route("/brady/derive/:case_id", post(handlers::brady_derive))
+        .route("/brady/disclosed", post(handlers::brady_record_disclosed))
+        .route("/brady/reconcile/:case_id", post(handlers::brady_reconcile))
+        .route("/brady/lead-report/:case_id", get(handlers::brady_report))
+        .route("/trial-penalty/offices", get(handlers::tp_office))
+        .route("/trial-penalty/judges", get(handlers::tp_judge))
+        .route("/trial-penalty/heatmap", get(handlers::tp_heatmap))
+        .route("/trial-penalty/disparity", get(handlers::tp_disparity))
+        .route("/trial-penalty/motion", get(handlers::tp_motion))
+        .with_state(state)
+}

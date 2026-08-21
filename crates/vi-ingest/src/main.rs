@@ -1,5 +1,5 @@
 use anyhow::Result;
-use vi_ingest::{persist_case, CourtListenerClient, Source};
+use vi_ingest::run_named;
 
 #[tokio::main]
 async fn main() -> Result<()> {
@@ -11,7 +11,18 @@ async fn main() -> Result<()> {
     let pool = vi_db::pool_from_env().await?;
     vi_db::migrate(&pool).await?;
     let ledger = vi_ledger::Ledger::new(pool.clone());
-    let client = CourtListenerClient::new(std::env::var("CL_API_TOKEN").ok());
+
+    let source = std::env::var("INGEST_SOURCE").unwrap_or_else(|_| {
+        if std::env::var("CL_API_TOKEN")
+            .ok()
+            .filter(|s| !s.is_empty())
+            .is_some()
+        {
+            "courtlistener".into()
+        } else {
+            "fixture".into()
+        }
+    });
 
     let interval = std::env::var("INGEST_INTERVAL_SECS")
         .ok()
@@ -19,19 +30,15 @@ async fn main() -> Result<()> {
         .filter(|&s| s > 0);
 
     loop {
-        match client.poll().await {
-            Ok(records) => {
-                tracing::info!(source = client.name(), n = records.len(), "polled");
-                for r in &records {
-                    match persist_case(&pool, &ledger, r).await {
-                        Ok(_) => tracing::info!(docket = %r.docket_number, "persisted"),
-                        Err(e) => {
-                            tracing::error!(docket = %r.docket_number, error = %e, "persist failed")
-                        }
-                    }
-                }
-            }
-            Err(e) => tracing::error!(error = %e, "poll failed"),
+        match run_named(&pool, &ledger, &source).await {
+            Ok(report) => tracing::info!(
+                source = %report.source,
+                cases = report.cases_persisted,
+                opinions = report.opinions_persisted,
+                skipped = report.skipped,
+                "ingest cycle complete"
+            ),
+            Err(e) => tracing::error!(error = %e, "ingest cycle failed"),
         }
 
         match interval {

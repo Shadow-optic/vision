@@ -146,6 +146,7 @@ pub async fn cell_stats(
     State(st): State<AppState>,
     Path(cell): Path<String>,
 ) -> Result<Json<Value>, ApiError> {
+    let _ = vi_geo::k_ring(&cell, 0)?;
     let row = sqlx::query_scalar::<_, Value>(
         r#"SELECT jsonb_build_object(
              'cell', $1,
@@ -159,7 +160,109 @@ pub async fn cell_stats(
     .bind(&cell)
     .fetch_one(&st.pool)
     .await?;
-    Ok(Json(row))
+
+    let ladder: Vec<Value> = sqlx::query_scalar(
+        r#"SELECT jsonb_build_object(
+             'resolution', resolution, 'cell', h3_cell, 'cases', COUNT(DISTINCT case_id))
+           FROM case_h3_cells
+           WHERE case_id IN (
+             SELECT case_id FROM court_cases WHERE court_h3_cell = $1 OR incident_h3_cell = $1
+             UNION
+             SELECT case_id FROM case_h3_cells WHERE h3_cell = $1
+           )
+           GROUP BY resolution, h3_cell
+           ORDER BY resolution"#,
+    )
+    .bind(&cell)
+    .fetch_all(&st.pool)
+    .await?;
+
+    let boundary = vi_geo::cell_boundary(&cell)?;
+    let mut obj = row;
+    if let Some(map) = obj.as_object_mut() {
+        map.insert("ladder".into(), json!(ladder));
+        map.insert(
+            "boundary".into(),
+            json!(boundary
+                .iter()
+                .map(|(lat, lng)| json!({"lat": lat, "lng": lng}))
+                .collect::<Vec<_>>()),
+        );
+    }
+    Ok(Json(obj))
+}
+
+#[derive(Deserialize)]
+pub struct KringQ {
+    pub k: Option<u32>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CellAgg {
+    cell: Option<String>,
+    total: i64,
+    convictions: i64,
+    avg_sentence_months: Option<f64>,
+}
+
+pub async fn kring_stats(
+    State(st): State<AppState>,
+    Path(cell): Path<String>,
+    Query(q): Query<KringQ>,
+) -> Result<Json<Value>, ApiError> {
+    let k = q.k.unwrap_or(1).min(5);
+    let neighbors = vi_geo::k_ring(&cell, k)?;
+    let rows: Vec<CellAgg> = sqlx::query_as(
+        r#"SELECT cell,
+                  COUNT(*)::bigint AS total,
+                  COUNT(*) FILTER (WHERE outcome = 'conviction')::bigint AS convictions,
+                  AVG(sentence_months::float8) FILTER (WHERE outcome = 'conviction') AS avg_sentence_months
+           FROM (
+             SELECT court_h3_cell AS cell, outcome, sentence_months
+             FROM court_cases WHERE court_h3_cell = ANY($1)
+             UNION ALL
+             SELECT incident_h3_cell, outcome, sentence_months
+             FROM court_cases
+             WHERE incident_h3_cell = ANY($1)
+               AND incident_h3_cell IS DISTINCT FROM court_h3_cell
+           ) t
+           GROUP BY cell"#,
+    )
+    .bind(&neighbors)
+    .fetch_all(&st.pool)
+    .await?;
+
+    let by_cell: std::collections::HashMap<String, CellAgg> = rows
+        .into_iter()
+        .filter_map(|r| r.cell.clone().map(|c| (c, r)))
+        .collect();
+
+    let cells: Vec<Value> = neighbors
+        .iter()
+        .map(|n| {
+            let agg = by_cell.get(n);
+            let total = agg.map(|a| a.total).unwrap_or(0);
+            let convictions = agg.map(|a| a.convictions).unwrap_or(0);
+            json!({
+                "cell": n,
+                "total": total,
+                "convictions": convictions,
+                "conviction_rate": if total > 0 {
+                    Some(convictions as f64 / total as f64)
+                } else {
+                    None
+                },
+                "avg_sentence_months": agg.and_then(|a| a.avg_sentence_months),
+                "origin": n == &cell,
+            })
+        })
+        .collect();
+
+    Ok(Json(json!({
+        "origin": cell,
+        "k": k,
+        "cells": cells,
+    })))
 }
 
 // ---------- TrustScript rules ----------
@@ -327,8 +430,20 @@ pub async fn simulate(
     State(st): State<AppState>,
     Json(req): Json<SimReq>,
 ) -> Result<Json<Value>, ApiError> {
-    let p = &req.priors;
-    let s = &req.strategy;
+    validate_sim_inputs(&req.priors, &req.strategy)?;
+    let trials = req.trials.clamp(100, 1_000_000);
+    let seed = req.seed.unwrap_or(42);
+    let (sim_id, entry, dist) =
+        persist_simulation(&st, req.priors, req.strategy, trials, seed).await?;
+    Ok(Json(json!({
+        "simulation_id": sim_id,
+        "ledger_seq": entry.seq,
+        "priors_source": "caller",
+        "distribution": dist
+    })))
+}
+
+fn validate_sim_inputs(p: &vi_sim::CasePriors, s: &vi_sim::Strategy) -> Result<(), ApiError> {
     unit_interval(p.evidence_strength, "evidence_strength")?;
     unit_interval(p.charge_severity, "charge_severity")?;
     unit_interval(p.prior_record, "prior_record")?;
@@ -341,16 +456,23 @@ pub async fn simulate(
     if p.base_plea_months < 0.0 || p.base_trial_months < 0.0 {
         return Err(ApiError::bad_req("base months must be >= 0"));
     }
-    let trials = req.trials.clamp(100, 1_000_000);
-    let seed = req.seed.unwrap_or(42);
+    Ok(())
+}
 
-    let (p2, s2) = (p.clone(), s.clone());
+async fn persist_simulation(
+    st: &AppState,
+    priors: vi_sim::CasePriors,
+    strategy: vi_sim::Strategy,
+    trials: u32,
+    seed: u64,
+) -> Result<(Uuid, vi_ledger::LedgerEntry, vi_sim::Distribution), ApiError> {
+    let (p2, s2) = (priors.clone(), strategy.clone());
     let dist = tokio::task::spawn_blocking(move || vi_sim::simulate(&p2, &s2, trials, seed))
         .await
         .map_err(ApiError::internal)?;
 
     let sim_id = Uuid::new_v4();
-    let params = json!({"priors": p, "strategy": s, "trials": trials, "seed": seed});
+    let params = json!({"priors": priors, "strategy": strategy, "trials": trials, "seed": seed});
     sqlx::query(
         "INSERT INTO simulations (sim_id, seed, trials, params, result) VALUES ($1,$2,$3,$4,$5)",
     )
@@ -374,10 +496,104 @@ pub async fn simulate(
             }),
         )
         .await?;
+    Ok((sim_id, entry, dist))
+}
 
+#[derive(Deserialize, Default)]
+pub struct SimFromCase {
+    pub strategy: Option<vi_sim::Strategy>,
+    pub trials: Option<u32>,
+    pub seed: Option<u64>,
+}
+
+#[derive(sqlx::FromRow)]
+struct CaseCalib {
+    evidence_strength: Option<String>,
+    charge_category: Option<String>,
+    plea_offer_months: Option<i32>,
+    sentence_months: Option<i32>,
+    judge: Option<String>,
+    office: Option<String>,
+}
+
+pub async fn simulate_from_case(
+    State(st): State<AppState>,
+    Path(case_id): Path<Uuid>,
+    Json(req): Json<SimFromCase>,
+) -> Result<Json<Value>, ApiError> {
+    let row = sqlx::query_as::<_, CaseCalib>(
+        "SELECT c.evidence_strength, c.charge_category, c.plea_offer_months, c.sentence_months,
+                c.judge, p.office
+         FROM court_cases c
+         LEFT JOIN prosecutors p ON p.prosecutor_id = c.prosecutor_id
+         WHERE c.case_id = $1",
+    )
+    .bind(case_id)
+    .fetch_optional(&st.pool)
+    .await?
+    .ok_or_else(ApiError::not_found)?;
+
+    let (office_conviction, mean_plea, mean_trial): (Option<f64>, Option<f64>, Option<f64>) =
+        if let Some(office) = row.office.as_deref() {
+            sqlx::query_as(
+                "SELECT
+                   (COUNT(*) FILTER (WHERE outcome = 'conviction')::float8
+                     / NULLIF(COUNT(*) FILTER (WHERE outcome IS NOT NULL), 0)) AS conviction_rate,
+                   AVG(sentence_months::float8) FILTER (WHERE plea_accepted) AS mean_plea,
+                   AVG(sentence_months::float8) FILTER (WHERE NOT plea_accepted AND outcome = 'conviction') AS mean_trial
+                 FROM court_cases c
+                 JOIN prosecutors p ON p.prosecutor_id = c.prosecutor_id
+                 WHERE p.office = $1",
+            )
+            .bind(office)
+            .fetch_one(&st.pool)
+            .await?
+        } else {
+            (None, None, None)
+        };
+
+    let judge_rate: Option<f64> = if let Some(judge) = row.judge.as_deref() {
+        sqlx::query_scalar(
+            "SELECT COUNT(*) FILTER (WHERE outcome = 'conviction')::float8
+               / NULLIF(COUNT(*) FILTER (WHERE outcome IS NOT NULL), 0)
+             FROM court_cases WHERE judge = $1",
+        )
+        .bind(judge)
+        .fetch_one(&st.pool)
+        .await?
+    } else {
+        None
+    };
+
+    let (priors, priors_source) = vi_sim::priors_from_stats(&vi_sim::CalibrationInputs {
+        evidence_strength: row.evidence_strength,
+        charge_category: row.charge_category,
+        office_conviction_rate: office_conviction,
+        office_mean_plea_months: mean_plea,
+        office_mean_trial_months: mean_trial,
+        judge_conviction_rate: judge_rate,
+        case_plea_offer_months: row.plea_offer_months.map(|n| n as f64),
+        case_sentence_months: row.sentence_months.map(|n| n as f64),
+    });
+
+    let strategy = req.strategy.unwrap_or(vi_sim::Strategy {
+        name: "calibrated-baseline".into(),
+        plea_discount: 0.10,
+        suppression_bonus: 0.05,
+        acquittal_bonus: 0.05,
+    });
+    validate_sim_inputs(&priors, &strategy)?;
+    let trials = req.trials.unwrap_or(10_000).clamp(100, 1_000_000);
+    let seed = req.seed.unwrap_or(42);
+    let (sim_id, entry, dist) =
+        persist_simulation(&st, priors.clone(), strategy.clone(), trials, seed).await?;
     Ok(Json(json!({
         "simulation_id": sim_id,
         "ledger_seq": entry.seq,
+        "case_id": case_id,
+        "priors_source": priors_source,
+        "priors": priors,
+        "strategy": strategy,
         "distribution": dist
     })))
 }
@@ -459,16 +675,19 @@ pub async fn lasm_package(
     State(st): State<AppState>,
     Path(case_id): Path<Uuid>,
 ) -> Result<Response, ApiError> {
-    let row: Option<(String, Option<String>)> = sqlx::query_as(
-        "SELECT COALESCE(docket_number, case_id::text),
-                (SELECT o.citation FROM court_opinions o WHERE o.case_id = c.case_id LIMIT 1)
-         FROM court_cases c WHERE c.case_id = $1",
+    let row: Option<(String, Option<String>, Option<String>)> = sqlx::query_as(
+        "SELECT COALESCE(c.docket_number, c.case_id::text),
+                (SELECT o.citation FROM court_opinions o WHERE o.case_id = c.case_id LIMIT 1),
+                p.office
+         FROM court_cases c
+         LEFT JOIN prosecutors p ON p.prosecutor_id = c.prosecutor_id
+         WHERE c.case_id = $1",
     )
     .bind(case_id)
     .fetch_optional(&st.pool)
     .await?;
-    let (docket, citation) = row.ok_or_else(ApiError::not_found)?;
-    let caption = citation.unwrap_or_else(|| docket.clone());
+    let (docket, citation, office) = row.ok_or_else(ApiError::not_found)?;
+    let caption = citation.clone().unwrap_or_else(|| docket.clone());
 
     let flags: Vec<(String, String, Value)> = sqlx::query_as(
         "SELECT label, severity, explanation FROM abuse_flags
@@ -508,11 +727,79 @@ pub async fn lasm_package(
         })
         .collect();
 
+    let brady_gaps = match sqlx::query_scalar::<_, Value>(
+        "SELECT report FROM brady_recon_runs WHERE case_id=$1 ORDER BY run_at DESC LIMIT 1",
+    )
+    .bind(case_id)
+    .fetch_optional(&st.pool)
+    .await?
+    {
+        Some(report) => report
+            .get("gaps")
+            .and_then(Value::as_array)
+            .map(|gaps| {
+                gaps.iter()
+                    .filter_map(|g| {
+                        Some(vi_lasm::BradyGap {
+                            item_type: g.get("item_type")?.as_str()?.to_string(),
+                            description: g.get("description")?.as_str()?.to_string(),
+                            source_reference: g
+                                .get("source_reference")
+                                .and_then(Value::as_str)
+                                .unwrap_or("")
+                                .to_string(),
+                        })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default(),
+        None => Vec::new(),
+    };
+
+    let monell = if let Some(office) = office.as_deref() {
+        let fp = vi_monell_atlas::stats::office_fingerprint(&st.pool, office, None).await?;
+        Some(vi_lasm::MonellSummary {
+            office: fp.office,
+            total_substantiated: fp.total_substantiated,
+            interpretation: fp.interpretation,
+        })
+    } else {
+        None
+    };
+
+    let trial_penalty = if let Some(office) = office.as_deref() {
+        let (n, mean_ratio): (i64, Option<f64>) = sqlx::query_as(
+            "SELECT COUNT(*)::bigint,
+                    AVG(cc.sentence_months::float / cc.plea_offer_months)
+             FROM court_cases cc
+             JOIN prosecutors p ON p.prosecutor_id = cc.prosecutor_id
+             WHERE p.office = $1
+               AND cc.plea_offered = true
+               AND cc.plea_accepted = false
+               AND cc.outcome = 'conviction'
+               AND cc.plea_offer_months > 0
+               AND cc.sentence_months > 0",
+        )
+        .bind(office)
+        .fetch_one(&st.pool)
+        .await?;
+        Some(vi_lasm::TrialPenaltySummary {
+            office: office.to_string(),
+            n,
+            mean_ratio,
+        })
+    } else {
+        None
+    };
+
     let md = vi_lasm::render(&vi_lasm::EvidencePackage {
-        caption: &caption,
-        docket_number: &docket,
+        caption,
+        docket_number: docket,
         flags: summaries,
         ledger,
+        brady_gaps,
+        monell,
+        trial_penalty,
     })
     .map_err(ApiError::internal)?;
     Ok((StatusCode::OK, [("content-type", "text/markdown")], md).into_response())
@@ -702,6 +989,124 @@ pub async fn tp_motion(
     let ctx = vi_trial_penalty::motion::MotionContext::from_distribution(q.office.clone(), &dist);
     let md = vi_trial_penalty::motion::render(&ctx).map_err(ApiError::internal)?;
     Ok((StatusCode::OK, [("content-type", "text/markdown")], md).into_response())
+}
+
+// ---------- Tactics ----------
+
+#[derive(Deserialize)]
+pub struct TacticQ {
+    pub category: Option<String>,
+}
+
+pub async fn list_tactics(
+    State(st): State<AppState>,
+    Query(q): Query<TacticQ>,
+) -> Result<Json<Value>, ApiError> {
+    let tactics = vi_tactics::list(&st.pool, q.category.as_deref()).await?;
+    Ok(Json(json!({ "tactics": tactics })))
+}
+
+pub async fn get_tactic(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(json!(vi_tactics::get(&st.pool, id).await?)))
+}
+
+pub async fn create_tactic(
+    State(st): State<AppState>,
+    Json(body): Json<vi_tactics::NewTactic>,
+) -> Result<Json<Value>, ApiError> {
+    let id = vi_tactics::create(&st.pool, &st.ledger, &body).await?;
+    Ok(Json(json!({ "tactic_id": id })))
+}
+
+pub async fn tactic_stats(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(json!(vi_tactics::refresh_stats(&st.pool, id).await?)))
+}
+
+// ---------- Ingest ----------
+
+#[derive(Deserialize)]
+pub struct IngestRun {
+    pub source: String,
+}
+
+pub async fn ingest_run(
+    State(st): State<AppState>,
+    Json(body): Json<IngestRun>,
+) -> Result<Json<Value>, ApiError> {
+    let report = vi_ingest::run_named(&st.pool, &st.ledger, &body.source).await?;
+    Ok(Json(json!(report)))
+}
+
+pub async fn ingest_status(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
+    let cursors = vi_ingest::list_cursors(&st.pool).await?;
+    Ok(Json(json!({ "cursors": cursors })))
+}
+
+// ---------- Engine catalog ----------
+
+pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
+    vi_db::ping(&st.pool).await?;
+    let cases: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM court_cases")
+        .fetch_one(&st.pool)
+        .await?;
+    let opinions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM court_opinions")
+        .fetch_one(&st.pool)
+        .await?;
+    let tactics: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM tactics")
+        .fetch_one(&st.pool)
+        .await?;
+    let rules: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM abuse_rules")
+        .fetch_one(&st.pool)
+        .await?;
+    let findings: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM constitutional_findings")
+        .fetch_one(&st.pool)
+        .await?;
+    let ledger_n: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM ledger_entries")
+        .fetch_one(&st.pool)
+        .await?;
+    let sims: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM simulations")
+        .fetch_one(&st.pool)
+        .await?;
+    let h3: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM case_h3_cells")
+        .fetch_one(&st.pool)
+        .await?;
+
+    Ok(Json(json!({
+        "backend": "vi-api",
+        "database": "ready",
+        "engines": [
+            {"name": "Root Ledger", "crate": "vi-ledger", "rows": ledger_n,
+             "routes": ["/ledger/verify"]},
+            {"name": "Case-law DB", "crate": "vi-api", "rows": opinions,
+             "routes": ["/cases/search", "/cases/:id"]},
+            {"name": "Correlation", "crate": "vi-correlation", "rows": cases,
+             "routes": ["/stats/pearson", "/stats/odds", "/stats/plea-sentence"]},
+            {"name": "Tactics DB", "crate": "vi-tactics", "rows": tactics,
+             "routes": ["/tactics", "/tactics/:id", "/tactics/:id/stats"]},
+            {"name": "Abuse detection", "crate": "vi-trustscript", "rows": rules,
+             "routes": ["/rules", "/rules/run", "/flags"]},
+            {"name": "Zero-day sim", "crate": "vi-sim", "rows": sims,
+             "routes": ["/simulate", "/simulate/from-case/:case_id"]},
+            {"name": "H3 intelligence", "crate": "vi-geo", "rows": h3,
+             "routes": ["/geo/cells/:cell", "/geo/kring/:cell"]},
+            {"name": "Telemetry / ingest", "crate": "vi-ingest", "rows": cases,
+             "routes": ["/ingest/run", "/ingest/status"]},
+            {"name": "JIT LASM", "crate": "vi-lasm", "rows": cases,
+             "routes": ["/lasm/package/:case_id"]},
+            {"name": "Monell atlas", "crate": "vi-monell-atlas", "rows": findings,
+             "routes": ["/atlas/findings", "/atlas/offices/fingerprint", "/atlas/offices/monell-report"]},
+            {"name": "Brady recon", "crate": "vi-brady-recon", "rows": cases,
+             "routes": ["/brady/derive/:case_id", "/brady/reconcile/:case_id", "/brady/lead-report/:case_id"]},
+            {"name": "Trial penalty", "crate": "vi-trial-penalty", "rows": cases,
+             "routes": ["/trial-penalty/offices", "/trial-penalty/heatmap", "/trial-penalty/disparity", "/trial-penalty/motion"]}
+        ]
+    })))
 }
 
 #[cfg(test)]

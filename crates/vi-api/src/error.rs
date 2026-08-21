@@ -58,6 +58,32 @@ impl From<vi_trial_penalty::Error> for ApiError {
         Self::internal(e)
     }
 }
+impl From<vi_tactics::Error> for ApiError {
+    fn from(e: vi_tactics::Error) -> Self {
+        match e {
+            vi_tactics::Error::InvalidCategory(s) | vi_tactics::Error::InvalidSignal(s) => {
+                Self::bad_req(s)
+            }
+            vi_tactics::Error::NotFound => Self::not_found(),
+            _ => Self::internal(e),
+        }
+    }
+}
+impl From<vi_geo::GeoError> for ApiError {
+    fn from(e: vi_geo::GeoError) -> Self {
+        Self::bad_req(e.to_string())
+    }
+}
+impl From<anyhow::Error> for ApiError {
+    fn from(e: anyhow::Error) -> Self {
+        let msg = e.to_string();
+        if msg.starts_with("unknown ingest source") {
+            Self::bad_req(msg)
+        } else {
+            Self::internal(msg)
+        }
+    }
+}
 impl From<serde_json::Error> for ApiError {
     fn from(e: serde_json::Error) -> Self {
         Self::bad_req(e.to_string())

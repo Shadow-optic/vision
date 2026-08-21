@@ -22,12 +22,36 @@ pub struct LedgerRef {
     pub entry_hash: String,
 }
 
+#[derive(Debug, Serialize, Default)]
+pub struct BradyGap {
+    pub item_type: String,
+    pub description: String,
+    pub source_reference: String,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct MonellSummary {
+    pub office: String,
+    pub total_substantiated: i64,
+    pub interpretation: String,
+}
+
+#[derive(Debug, Serialize, Default)]
+pub struct TrialPenaltySummary {
+    pub office: String,
+    pub n: i64,
+    pub mean_ratio: Option<f64>,
+}
+
 #[derive(Debug, Serialize)]
-pub struct EvidencePackage<'a> {
-    pub caption: &'a str,
-    pub docket_number: &'a str,
+pub struct EvidencePackage {
+    pub caption: String,
+    pub docket_number: String,
     pub flags: Vec<FlagSummary>,
     pub ledger: Vec<LedgerRef>,
+    pub brady_gaps: Vec<BradyGap>,
+    pub monell: Option<MonellSummary>,
+    pub trial_penalty: Option<TrialPenaltySummary>,
 }
 
 const TEMPLATE: &str = r#"# Evidence Package — Attorney Work Product
@@ -40,6 +64,32 @@ const TEMPLATE: &str = r#"# Evidence Package — Attorney Work Product
 {{#each matched}}- `{{this}}`
 {{/each}}
 {{/each}}
+{{#unless flags}}_No substantiated TrustScript flags for this matter._
+{{/unless}}
+
+## Brady Reconciliation Leads
+Gaps below are *research leads*, not proven Brady violations. They require attorney review and a discovery/FOIA record before any filing.
+{{#each brady_gaps}}
+- **{{item_type}}:** {{description}} (source: {{source_reference}})
+{{/each}}
+{{#unless brady_gaps}}_No Brady recon gaps on file for this matter. Run POST /brady/reconcile/:case_id first._
+{{/unless}}
+
+## Monell / Pattern-and-Practice (office)
+{{#if monell}}
+**Office:** {{monell.office}} — **substantiated findings:** {{monell.total_substantiated}}
+
+{{monell.interpretation}}
+{{else}}
+_No office fingerprint available._
+{{/if}}
+
+## Trial-Penalty Observatory (office)
+{{#if trial_penalty}}
+**Office:** {{trial_penalty.office}} — **eligible cases:** {{trial_penalty.n}} — **mean trial/plea ratio:** {{trial_penalty.mean_ratio}}
+{{else}}
+_No trial-penalty snapshot available._
+{{/if}}
 
 ## Provenance (Root Ledger)
 | seq | event | entry hash (BLAKE3) |
@@ -67,6 +117,7 @@ impl From<handlebars::RenderError> for RenderError {
 
 pub fn render(pkg: &EvidencePackage) -> Result<String, RenderError> {
     let mut h = Handlebars::new();
+    h.set_strict_mode(false);
     h.register_template_string("pkg", TEMPLATE)?;
     Ok(h.render("pkg", pkg)?)
 }
@@ -75,11 +126,10 @@ pub fn render(pkg: &EvidencePackage) -> Result<String, RenderError> {
 mod tests {
     use super::*;
 
-    #[test]
-    fn renders_work_product_banner() {
-        let md = render(&EvidencePackage {
-            caption: "Demo v. Demo",
-            docket_number: "DEMO-2024-001",
+    fn base_pkg() -> EvidencePackage {
+        EvidencePackage {
+            caption: "Demo v. Demo".into(),
+            docket_number: "DEMO-2024-001".into(),
             flags: vec![FlagSummary {
                 label: "Plea coercion suspected".into(),
                 severity: "high".into(),
@@ -90,10 +140,33 @@ mod tests {
                 event_type: "AbuseFlag".into(),
                 entry_hash: "abc".into(),
             }],
-        })
-        .unwrap();
+            brady_gaps: vec![BradyGap {
+                item_type: "bodycam".into(),
+                description: "Body-worn camera footage".into(),
+                source_reference: "Demo v. Demo (2024)".into(),
+            }],
+            monell: Some(MonellSummary {
+                office: "Demo County DA".into(),
+                total_substantiated: 1,
+                interpretation: "Review required.".into(),
+            }),
+            trial_penalty: Some(TrialPenaltySummary {
+                office: "Demo County DA".into(),
+                n: 2,
+                mean_ratio: Some(2.25),
+            }),
+        }
+    }
+
+    #[test]
+    fn renders_work_product_banner() {
+        let md = render(&base_pkg()).unwrap();
         assert!(md.contains("Attorney Work Product"));
         assert!(md.contains("Plea coercion suspected"));
         assert!(md.contains("DEMO-2024-001"));
+        assert!(md.contains("research leads"));
+        assert!(md.contains("Body-worn camera footage"));
+        assert!(md.contains("Demo County DA"));
+        assert!(md.contains("2.25"));
     }
 }
