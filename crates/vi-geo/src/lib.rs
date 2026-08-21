@@ -3,7 +3,8 @@
 //! composition joins against ACS census data) are pure SQL.
 #![forbid(unsafe_code)]
 
-use h3o::{LatLng, Resolution};
+use h3o::{CellIndex, LatLng, Resolution};
+use std::str::FromStr;
 
 #[derive(Debug, thiserror::Error)]
 #[error("{0}")]
@@ -25,6 +26,30 @@ pub fn ladder(lat: f64, lng: f64) -> Vec<(u8, String)> {
         .collect()
 }
 
+fn parse_cell(cell: &str) -> Result<CellIndex, GeoError> {
+    CellIndex::from_str(cell).map_err(|e| GeoError(e.to_string()))
+}
+
+/// Inclusive k-ring (H3 `grid_disk`): origin cell plus neighbors out to `k`.
+pub fn k_ring(cell: &str, k: u32) -> Result<Vec<String>, GeoError> {
+    let idx = parse_cell(cell)?;
+    Ok(idx
+        .grid_disk::<Vec<_>>(k)
+        .into_iter()
+        .map(|c| c.to_string())
+        .collect())
+}
+
+/// Ordered boundary vertices as (lat, lng) degrees for GeoJSON-style payloads.
+pub fn cell_boundary(cell: &str) -> Result<Vec<(f64, f64)>, GeoError> {
+    let idx = parse_cell(cell)?;
+    Ok(idx
+        .boundary()
+        .iter()
+        .map(|ll| (ll.lat(), ll.lng()))
+        .collect())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -41,5 +66,24 @@ mod tests {
     fn rejects_out_of_range() {
         assert!(cell_for(0.0, 0.0, 16).is_err());
         assert!(cell_for(0.0, 0.0, 99).is_err());
+    }
+
+    #[test]
+    fn k_ring_includes_origin_and_is_deterministic() {
+        let cell = cell_for(37.7749, -122.4194, 8).unwrap();
+        let a = k_ring(&cell, 1).unwrap();
+        let b = k_ring(&cell, 1).unwrap();
+        assert_eq!(a, b);
+        assert!(a.contains(&cell));
+        // origin + up to 6 neighbors at k=1
+        assert!(!a.is_empty() && a.len() <= 7);
+        let k0 = k_ring(&cell, 0).unwrap();
+        assert_eq!(k0, vec![cell.clone()]);
+        assert!(cell_boundary(&cell).unwrap().len() >= 6);
+    }
+
+    #[test]
+    fn k_ring_rejects_garbage() {
+        assert!(k_ring("not-a-cell", 1).is_err());
     }
 }

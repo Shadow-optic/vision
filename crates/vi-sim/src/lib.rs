@@ -51,6 +51,83 @@ fn clamp01(x: f64) -> f64 {
     x.clamp(0.0, 1.0)
 }
 
+/// Observed office / case statistics used to derive [`CasePriors`].
+/// Missing fields fall back to the transparent null-hypothesis defaults.
+#[derive(Debug, Clone, Default)]
+pub struct CalibrationInputs {
+    pub evidence_strength: Option<String>,
+    pub charge_category: Option<String>,
+    pub office_conviction_rate: Option<f64>,
+    pub office_mean_plea_months: Option<f64>,
+    pub office_mean_trial_months: Option<f64>,
+    pub judge_conviction_rate: Option<f64>,
+    pub case_plea_offer_months: Option<f64>,
+    pub case_sentence_months: Option<f64>,
+}
+
+fn map_evidence(label: &str) -> f64 {
+    match label.to_ascii_lowercase().as_str() {
+        "weak" => 0.30,
+        "mixed" => 0.55,
+        "strong" => 0.80,
+        _ => 0.50,
+    }
+}
+
+fn map_charge_severity(category: &str) -> f64 {
+    match category.to_ascii_lowercase().as_str() {
+        "drug" | "possession" => 0.40,
+        "assault" | "violent" => 0.65,
+        "homicide" => 0.90,
+        _ => 0.50,
+    }
+}
+
+/// Derive priors from stored public-record aggregates.
+/// Returns `(priors, source)` where source is `"calibrated"` when office
+/// conviction rate and at least one sentence mean are present, else `"fallback"`.
+pub fn priors_from_stats(c: &CalibrationInputs) -> (CasePriors, &'static str) {
+    let evidence = c
+        .evidence_strength
+        .as_deref()
+        .map(map_evidence)
+        .unwrap_or(0.50);
+    let charge = c
+        .charge_category
+        .as_deref()
+        .map(map_charge_severity)
+        .unwrap_or(0.50);
+    let prosecutor = c.office_conviction_rate.unwrap_or(0.50).clamp(0.0, 1.0);
+    let judge = c.judge_conviction_rate.unwrap_or(0.50).clamp(0.0, 1.0);
+    let base_plea = c
+        .office_mean_plea_months
+        .or(c.case_plea_offer_months)
+        .unwrap_or(24.0)
+        .max(0.0);
+    let base_trial = c
+        .office_mean_trial_months
+        .or(c.case_sentence_months)
+        .unwrap_or(72.0)
+        .max(0.0);
+
+    let calibrated = c.office_conviction_rate.is_some()
+        && (c.office_mean_plea_months.is_some() || c.office_mean_trial_months.is_some());
+
+    (
+        CasePriors {
+            evidence_strength: evidence,
+            charge_severity: charge,
+            prior_record: 0.20,
+            judge_propensity: judge,
+            prosecutor_aggressiveness: prosecutor,
+            jury_propensity: 0.50,
+            base_plea_months: base_plea,
+            base_trial_months: base_trial,
+        },
+        if calibrated { "calibrated" } else { "fallback" },
+    )
+}
+
 pub fn simulate(p: &CasePriors, s: &Strategy, trials: u32, seed: u64) -> Distribution {
     if trials == 0 {
         return Distribution {
@@ -199,5 +276,34 @@ mod tests {
         assert_eq!(d.trials, 0);
         assert_eq!(d.expected_months, 0.0);
         assert_eq!(d.p_dismissal, 0.0);
+    }
+
+    #[test]
+    fn priors_from_stats_calibrated_when_office_data_present() {
+        let (p, src) = priors_from_stats(&CalibrationInputs {
+            evidence_strength: Some("weak".into()),
+            charge_category: Some("drug".into()),
+            office_conviction_rate: Some(0.8),
+            office_mean_plea_months: Some(12.0),
+            office_mean_trial_months: Some(36.0),
+            judge_conviction_rate: Some(0.7),
+            case_plea_offer_months: Some(12.0),
+            case_sentence_months: Some(36.0),
+        });
+        assert_eq!(src, "calibrated");
+        assert!((p.evidence_strength - 0.30).abs() < 1e-9);
+        assert!((p.charge_severity - 0.40).abs() < 1e-9);
+        assert!((p.prosecutor_aggressiveness - 0.8).abs() < 1e-9);
+        assert_eq!(p.base_plea_months, 12.0);
+        assert_eq!(p.base_trial_months, 36.0);
+    }
+
+    #[test]
+    fn priors_from_stats_fallback_without_office_means() {
+        let (_, src) = priors_from_stats(&CalibrationInputs {
+            evidence_strength: Some("mixed".into()),
+            ..CalibrationInputs::default()
+        });
+        assert_eq!(src, "fallback");
     }
 }

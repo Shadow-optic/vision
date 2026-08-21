@@ -11,15 +11,17 @@ The API is an MVP that is compile-time database-URL-free (runtime-checked SQL), 
 | Root Ledger | `vi-ledger` | BLAKE3 hash-chained, append-only, full `verify()` |
 | Case-law DB | schema + `vi-api` search | Generated `tsv` + GIN; opinion search live |
 | Correlation | `vi-correlation` | Pearson + Fisher CIs, odds ratios, formula-audited |
-| Tactics DB | schema | Ready; population is curation (Phase 2) |
+| Tactics DB | `vi-tactics` | Seeded catalog; occurrence rates from public records |
 | Abuse detection | `vi-trustscript` | Lexer/parser/evaluator + rule CRUD + ledger flags |
-| Zero-day sim | `vi-sim` | Seeded Monte Carlo; weights are placeholder priors |
-| H3 intelligence | `vi-geo` | Multi-res ladder at ingest; k-ring maps are Phase 3 |
-| Telemetry / ingest | `vi-ingest` | `Source` trait + CourtListener client |
-| JIT LASM | `vi-lasm` | Evidence-package Markdown with ledger provenance |
+| Zero-day sim | `vi-sim` | Seeded Monte Carlo; `POST /simulate/from-case/:id` calibrates priors from stored office stats |
+| H3 intelligence | `vi-geo` | Multi-res ladder at ingest; k-ring (`grid_disk`) disparity API |
+| Telemetry / ingest | `vi-ingest` | CourtListener + fixture sources, cursor checkpoints, API-triggered poll |
+| JIT LASM | `vi-lasm` | Evidence package: flags, Brady leads, Monell, trial-penalty, ledger provenance |
 | Monell atlas | `vi-monell-atlas` | Pattern-and-practice fingerprint + §1983 scaffold |
 | Brady recon | `vi-brady-recon` | Expected vs disclosed evidence; gaps are *leads* |
 | Trial penalty | `vi-trial-penalty` | Distributions, disparity OR, draft motion template |
+
+`GET /engines` lists all twelve with live row counts.
 
 ## Quick start
 
@@ -29,7 +31,8 @@ export DATABASE_URL=postgres://postgres:postgres@localhost:5432/visioninjustice
 
 # pure tests — no DB required
 cargo test -p vi-ledger -p vi-correlation -p vi-trustscript -p vi-sim -p vi-geo \
-           -p vi-lasm -p vi-monell-atlas -p vi-brady-recon -p vi-trial-penalty
+           -p vi-lasm -p vi-tactics -p vi-ingest -p vi-monell-atlas -p vi-brady-recon \
+           -p vi-trial-penalty
 
 # with Postgres: applies migrations, then integration tests
 cargo test -p vi-api
@@ -42,6 +45,10 @@ Migrations run automatically on API (and ingest) startup via `sqlx::migrate!`.
 ### Demo against seeded data
 
 ```bash
+curl -s localhost:8080/engines
+curl -s localhost:8080/tactics
+curl -s localhost:8080/tactics/aaaaaaaa-0000-4000-8000-000000000001/stats
+
 # Fire abuse-detection on the seeded case (two pending-review flags)
 curl -s -X POST localhost:8080/rules/run \
   -H 'content-type: application/json' \
@@ -59,6 +66,17 @@ curl -s -X POST localhost:8080/simulate -H 'content-type: application/json' -d '
                "suppression_bonus":0.10,"acquittal_bonus":0.10},
   "trials": 10000, "seed": 42}'
 
+curl -s -X POST localhost:8080/simulate/from-case/22222222-2222-2222-2222-222222222222 \
+  -H 'content-type: application/json' -d '{"trials":10000,"seed":42}'
+
+# Ingest (fixture source — no CourtListener token required)
+curl -s -X POST localhost:8080/ingest/run -H 'content-type: application/json' \
+  -d '{"source":"fixture"}'
+curl -s localhost:8080/ingest/status
+
+# H3
+curl -s localhost:8080/geo/kring/8828308281fffff?k=1
+
 # Monell
 curl -s 'localhost:8080/atlas/offices/fingerprint?office=Demo%20County%20DA&jurisdiction=CA'
 curl -s 'localhost:8080/atlas/offices/monell-report?office=Demo%20County%20DA&jurisdiction=CA'
@@ -72,6 +90,9 @@ curl -s 'localhost:8080/brady/lead-report/22222222-2222-2222-2222-222222222222'
 curl -s 'localhost:8080/trial-penalty/offices?office=Demo%20County%20DA&jurisdiction=CA'
 curl -s 'localhost:8080/trial-penalty/motion?office=Demo%20County%20DA&jurisdiction=CA'
 curl -s 'localhost:8080/trial-penalty/disparity?group_a=Black&group_b=White&charge_category=drug'
+
+# LASM evidence package (Markdown)
+curl -s 'localhost:8080/lasm/package/22222222-2222-2222-2222-222222222222'
 ```
 
 ## Production
@@ -80,8 +101,11 @@ curl -s 'localhost:8080/trial-penalty/disparity?group_a=Black&group_b=White&char
 docker compose up --build
 ```
 
+Runs Postgres, `vi-api` on `:8080`, and `vi-ingest` (fixture source on a 300s loop; set `INGEST_SOURCE=courtlistener` and `CL_API_TOKEN` for live dockets/opinions).
+
 - `GET /health` — liveness
 - `GET /ready` — database ping
+- `GET /engines` — twelve-engine catalog + row counts
 - `BIND_ADDR` (default `0.0.0.0:8080`), `DATABASE_URL`, `DATABASE_MAX_CONNECTIONS`
 - Graceful shutdown on SIGINT/SIGTERM
 - Request tracing, 60s timeouts, permissive CORS (replace with an allow-list behind your gateway)
@@ -92,7 +116,7 @@ docker compose up --build
 
 1. **Defamation** — automated flags are never published against named prosecutors until an attorney-led Evidence Review Committee sets `review_status = substantiated`.
 2. **Correlation ≠ causation** — every motion-facing statistic carries CI, *n*, and formula.
-3. **Simulator honesty** — `p_conviction` weights are null-hypothesis priors. Calibrate per jurisdiction from `vi-correlation` before citing.
+3. **Simulator honesty** — `p_conviction` weights are a transparent prior model. `POST /simulate/from-case/:id` fills them from office/judge public-record rates; calibrate further from `vi-correlation` before citing.
 4. **Data licensing** — PACER fees/ToS; CourtListener/RECAP and state portals have their own terms. Race/ethnicity fields require counsel review.
 5. **UPL** — LASM / Monell / trial-penalty Markdown is attorney work product. The public portal stays informational.
 6. **Lawful inputs only** — court opinions, dockets, public settlements, bar records, FOIA disclosures. Sealed, juvenile, expunged, and non-public records are excluded.
@@ -105,9 +129,10 @@ crates/
 ├── vi-correlation/    Pearson + odds ratios
 ├── vi-trustscript/    Abuse-detection DSL
 ├── vi-sim/            Seeded Monte Carlo
-├── vi-geo/            H3 cells
+├── vi-geo/            H3 cells + k-ring
 ├── vi-db/             Pool, migrations, case context
-├── vi-ingest/         Source trait + CourtListener
+├── vi-ingest/         Source trait + CourtListener + fixture
+├── vi-tactics/        Tactic catalog + occurrence rates
 ├── vi-lasm/           Evidence-package renderer
 ├── vi-monell-atlas/   Pattern-and-practice atlas
 ├── vi-brady-recon/    Brady gap engine

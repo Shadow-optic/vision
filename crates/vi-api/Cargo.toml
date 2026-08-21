@@ -7,6 +7,7 @@ edition = "2021"
 axum = { workspace = true }
 chrono = { workspace = true }
 dotenvy = { workspace = true }
+anyhow = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }
 sqlx = { workspace = true }
@@ -19,10 +20,12 @@ vi-brady-recon = { path = "../vi-brady-recon" }
 vi-correlation = { path = "../vi-correlation" }
 vi-db = { path = "../vi-db" }
 vi-geo = { path = "../vi-geo" }
+vi-ingest = { path = "../vi-ingest" }
 vi-lasm = { path = "../vi-lasm" }
 vi-ledger = { path = "../vi-ledger" }
 vi-monell-atlas = { path = "../vi-monell-atlas" }
 vi-sim = { path = "../vi-sim" }
+vi-tactics = { path = "../vi-tactics" }
 vi-trial-penalty = { path = "../vi-trial-penalty" }
 vi-trustscript = { path = "../vi-trustscript" }
 
@@ -30,3 +33,4 @@ vi-trustscript = { path = "../vi-trustscript" }
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
+tower = { version = "0.4", features = ["util"] }
