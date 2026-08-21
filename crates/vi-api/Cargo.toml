@@ -28,6 +28,7 @@ vi-sim = { path = "../vi-sim" }
 vi-tactics = { path = "../vi-tactics" }
 vi-trial-penalty = { path = "../vi-trial-penalty" }
 vi-trustscript = { path = "../vi-trustscript" }
+vi-constitution = { path = "../vi-constitution" }
 
 [dev-dependencies]
 reqwest = { workspace = true }

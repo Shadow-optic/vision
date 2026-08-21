@@ -35,6 +35,7 @@ pub mod events {
     pub const TRIAL_PENALTY_SNAPSHOT: &str = "TrialPenaltySnapshot";
     pub const TACTIC_RECORDED: &str = "TacticRecorded";
     pub const OPINION_INGESTED: &str = "OpinionIngested";
+    pub const CONSTITUTION_SCREEN_RUN: &str = "ConstitutionScreenRun";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

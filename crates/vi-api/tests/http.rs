@@ -65,7 +65,7 @@ async fn all_engines_wired_over_http() {
     assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let catalog = json_body(&body);
     assert_eq!(catalog["backend"], "vi-api");
-    assert_eq!(catalog["engines"].as_array().unwrap().len(), 12);
+    assert_eq!(catalog["engines"].as_array().unwrap().len(), 13);
 
     let (st, body) = send(app.clone(), "GET", "/tactics", None).await;
     assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
@@ -153,6 +153,84 @@ async fn all_engines_wired_over_http() {
     assert!(md.contains("Attorney Work Product"));
     assert!(md.contains("research leads"));
     assert!(md.contains("Trial-Penalty"));
+}
+
+#[tokio::test]
+async fn constitution_engine_is_national() {
+    let Some(app) = router().await else {
+        eprintln!("skipping: DATABASE_URL not set");
+        return;
+    };
+
+    let (st, body) = send(app.clone(), "GET", "/constitution", None).await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let cat = json_body(&body);
+    assert_eq!(cat["states"], 50);
+    assert_eq!(cat["amendments"], 27);
+    assert!(cat["provision_rows"].as_i64().unwrap() >= 40);
+
+    let (st, body) = send(
+        app.clone(),
+        "GET",
+        "/constitution/jurisdictions?kind=state",
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let jurs = json_body(&body);
+    assert_eq!(jurs["jurisdictions"].as_array().unwrap().len(), 50);
+
+    let (st, body) = send(
+        app.clone(),
+        "GET",
+        "/constitution/provisions/amend.04",
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(json_body(&body)["body"]
+        .as_str()
+        .unwrap()
+        .contains("unreasonable searches"));
+
+    let (st, body) = send(
+        app.clone(),
+        "POST",
+        "/constitution/resolve",
+        Some(json!({
+            "clause_id": "amend.04.search_seizure",
+            "jurisdiction": "CA",
+            "court_level": "superior"
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let resolved = json_body(&body);
+    assert_eq!(resolved["circuit"], "CA9");
+    assert_eq!(resolved["state_analog"]["state_above_federal"], true);
+
+    let (st, body) = send(
+        app.clone(),
+        "POST",
+        &format!("/constitution/screen/{DEMO_CASE}"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let screen = json_body(&body);
+    assert!(screen["hit_count"].as_u64().unwrap() >= 2);
+
+    let (st, body) = send(
+        app,
+        "GET",
+        &format!("/constitution/screen/{DEMO_CASE}"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK);
+    let md = String::from_utf8(body).unwrap();
+    assert!(md.contains("Attorney Work Product"));
+    assert!(md.contains("not legal advice"));
 }
 
 #[tokio::test]

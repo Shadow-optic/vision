@@ -792,6 +792,20 @@ pub async fn lasm_package(
         None
     };
 
+    let constitution = sqlx::query_as::<_, (String, i32, String)>(
+        "SELECT jurisdiction, hit_count, COALESCE(report->>'authority', 'advisory')
+         FROM constitution_screens WHERE case_id=$1
+         ORDER BY created_at DESC LIMIT 1",
+    )
+    .bind(case_id)
+    .fetch_optional(&st.pool)
+    .await?
+    .map(|(jurisdiction, hit_count, authority)| vi_lasm::ConstitutionSummary {
+        jurisdiction,
+        hit_count: hit_count as i64,
+        authority,
+    });
+
     let md = vi_lasm::render(&vi_lasm::EvidencePackage {
         caption,
         docket_number: docket,
@@ -800,6 +814,7 @@ pub async fn lasm_package(
         brady_gaps,
         monell,
         trial_penalty,
+        constitution,
     })
     .map_err(ApiError::internal)?;
     Ok((StatusCode::OK, [("content-type", "text/markdown")], md).into_response())
@@ -1077,6 +1092,10 @@ pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError
         .fetch_one(&st.pool)
         .await?;
 
+    let provisions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM constitution_provisions")
+        .fetch_one(&st.pool)
+        .await?;
+
     Ok(Json(json!({
         "backend": "vi-api",
         "database": "ready",
@@ -1104,7 +1123,9 @@ pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError
             {"name": "Brady recon", "crate": "vi-brady-recon", "rows": cases,
              "routes": ["/brady/derive/:case_id", "/brady/reconcile/:case_id", "/brady/lead-report/:case_id"]},
             {"name": "Trial penalty", "crate": "vi-trial-penalty", "rows": cases,
-             "routes": ["/trial-penalty/offices", "/trial-penalty/heatmap", "/trial-penalty/disparity", "/trial-penalty/motion"]}
+             "routes": ["/trial-penalty/offices", "/trial-penalty/heatmap", "/trial-penalty/disparity", "/trial-penalty/motion"]},
+            {"name": "Constitution / Bill of Rights", "crate": "vi-constitution", "rows": provisions,
+             "routes": ["/constitution", "/constitution/options", "/constitution/jurisdictions", "/constitution/provisions", "/constitution/resolve", "/constitution/screen/:case_id"]}
         ]
     })))
 }
