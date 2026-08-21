@@ -338,7 +338,7 @@ pub async fn screen_case(
     .fetch_one(pool)
     .await?;
 
-    let brady_gaps: i64 = sqlx::query_scalar(
+    let brady_gaps: i32 = sqlx::query_scalar(
         "SELECT COALESCE((SELECT gaps_found FROM brady_recon_runs
           WHERE case_id = $1 ORDER BY run_at DESC LIMIT 1), 0)",
     )
