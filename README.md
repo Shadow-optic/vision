@@ -1,6 +1,6 @@
 # VisionInjustice
 
-A Rust monorepo for **systemic criminal-justice accountability**. Fourteen engines operate on **public records and counsel-substantiated findings only** — no OSINT, no leaked data, no publication of pending automated flags. After licensed counsel substantiates a public-record finding, the official's public-record identity and those findings are published. The engines do not charge anyone.
+A Rust monorepo for **systemic criminal-justice accountability**. Fourteen engines operate on **public records and counsel-substantiated findings only** — no OSINT, no leaked data, no publication of pending automated flags. After licensed counsel substantiates a public-record finding, the official's public-record identity and those findings are published. The engines do not file charges. After a conviction they advocate for the statutory maximum the same law provides, including life imprisonment where 18 U.S.C. §§ 241, 242, or 1512 authorize it.
 
 The API is an MVP that is compile-time database-URL-free (runtime-checked SQL), hash-chained, and ready to sit behind a gateway for real-world testing. It is **not** a substitute for licensed counsel, and it ships without AuthN/Z (Phase 4).
 
@@ -140,11 +140,11 @@ Runs Postgres, `vi-api` on `:8080`, and `vi-ingest` (fixture source on a 300s lo
 
 ## Guardrails (non-negotiable)
 
-1. **Counsel review, then public accountability** — automated flags never publish. Licensed counsel must set `review_status = substantiated` on a public-record finding. That official-conduct record (name, office, bar/badge, citation, finding) then publishes on the Wall of Injustice. Counsel may hold a card for victim privacy or a correction. No photos, home addresses, or private contact data. The engine does not charge.
+1. **Counsel review, then public accountability** — automated flags never publish. Licensed counsel must set `review_status = substantiated` on a public-record finding. That official-conduct record (name, office, bar/badge, citation, finding) then publishes on the Wall of Injustice. Counsel may hold a card for victim privacy or a correction. No photos, home addresses, or private contact data. The engine does not file charges. After conviction, sentencing memos advocate the statutory maximum — including life when the color-of-law titles authorize it (death resulting).
 2. **Correlation ≠ causation** — every motion-facing statistic carries CI, *n*, and formula.
 3. **Simulator honesty** — `p_conviction` weights are a transparent prior model. `POST /simulate/from-case/:id` fills them from office/judge public-record rates; calibrate further from `vi-correlation` before citing.
 4. **Data licensing** — PACER fees/ToS; CourtListener/RECAP and state portals have their own terms. Race/ethnicity fields require counsel review.
-5. **UPL** — LASM / Monell / trial-penalty / constitution-screen / Reckoning Markdown is attorney work product. The public portal stays informational. Constitutional screens and Reckoning packages are **not legal advice**, not charging documents, and never a finding of violation or a requested sentence.
+5. **UPL** — LASM / Monell / trial-penalty / constitution-screen / Reckoning Markdown is attorney work product. The public portal stays informational. Constitutional screens and Reckoning packages are **not legal advice** and not charging documents. Sentencing advocacy is the sentence counsel will seek *if convicted*, bounded by the statute.
 6. **Lawful inputs only** — court opinions, dockets, public settlements, bar records, FOIA disclosures. Sealed, juvenile, expunged, and non-public records are excluded.
 7. **Incomplete holdings** — the Constitution text is complete (Preamble, Articles I–VII, Amendments 1–27). The interpretation snapshot is curated criminal-procedure doctrine plus 50-state charter analogs. Circuit splits stay `unsettled`. It is not a citator.
 

@@ -233,6 +233,7 @@ async fn reckoning_engine_is_gated_and_evidence_backed() {
     assert!(md.contains("Attorney Work Product"));
     assert!(md.contains("not a charging document"));
     assert!(md.contains("18 U.S.C."));
+    assert!(md.contains("statutory maximum"));
     assert!(!md.to_lowercase().contains("no mercy"));
 
     let (st, body) = send(

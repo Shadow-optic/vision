@@ -4,8 +4,10 @@
 //! Licensed counsel reviews every finding. Once a finding is substantiated
 //! from public records, the official's public-record identity and those
 //! findings are published on the Wall of Injustice. The engine does not
-//! charge, file, or sentence anyone — humans do that. Pending automated
-//! flags never publish.
+//! file charges — humans do that. After a conviction, packages advocate
+//! for the statutory maximum the same law provides, including life
+//! imprisonment where 18 U.S.C. §§ 241, 242, or 1512 authorize it.
+//! Pending automated flags never publish.
 #![forbid(unsafe_code)]
 
 pub mod dashboard;
@@ -13,6 +15,7 @@ pub mod entity;
 pub mod package;
 pub mod report;
 pub mod score;
+pub mod sentencing;
 pub mod statutes;
 
 use thiserror::Error;

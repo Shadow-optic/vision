@@ -11,6 +11,7 @@ use vi_ledger::Ledger;
 use crate::entity::Actor;
 use crate::report;
 use crate::score::{self, AbuseScore};
+use crate::sentencing::{self, SentenceAdvocacy};
 use crate::statutes::{self, ImmunityNote, Statute};
 use crate::Error;
 
@@ -50,6 +51,7 @@ pub struct PackageContext {
     pub immunity: &'static [ImmunityNote],
     pub destinations: Vec<&'static str>,
     pub ledger: Vec<crate::report::LedgerRef>,
+    pub advocacy: SentenceAdvocacy,
 }
 
 pub fn validate_kind(kind: &str) -> Result<(), Error> {
@@ -115,10 +117,26 @@ fn destinations(kind: &str, actor: &Actor) -> Vec<&'static str> {
             }
         }
         "sentencing_memo" => {
-            vec!["Counsel of record only — not a public filing and not a requested sentence"]
+            vec!["Counsel of record — file after conviction; seek the statutory maximum, including life where authorized"]
         }
         _ => vec!["Licensed counsel"],
     }
+}
+
+async fn aggravators(pool: &PgPool, prosecutor_id: Option<Uuid>) -> Result<(bool, bool), Error> {
+    let Some(pid) = prosecutor_id else {
+        return Ok((false, false));
+    };
+    let row: (bool, bool) = sqlx::query_as(
+        "SELECT COALESCE(BOOL_OR(death_resulted), false),
+                COALESCE(BOOL_OR(bodily_injury), false)
+         FROM constitutional_findings
+         WHERE prosecutor_id = $1 AND review_status = 'substantiated'",
+    )
+    .bind(pid)
+    .fetch_one(pool)
+    .await?;
+    Ok(row)
 }
 
 pub async fn generate(
@@ -146,6 +164,8 @@ pub async fn generate(
         })
         .collect();
 
+    let (death_resulted, bodily_injury) = aggravators(pool, actor.prosecutor_id).await?;
+    let advocacy = sentencing::assemble(&statutes, death_resulted, bodily_injury);
     let destinations = destinations(kind, &actor);
     let ctx = PackageContext {
         actor,
@@ -156,6 +176,7 @@ pub async fn generate(
         immunity: statutes::IMMUNITY,
         destinations,
         ledger: ledger_refs,
+        advocacy,
     };
 
     let md = report::render_package(&ctx)?;
@@ -165,6 +186,8 @@ pub async fn generate(
         "score": ctx.score.score,
         "evidence_count": ctx.evidence.len(),
         "statute_citations": ctx.statutes.iter().map(|s| s.citation).collect::<Vec<_>>(),
+        "life_available": ctx.advocacy.life_available,
+        "advocated_sentence": ctx.advocacy.advocated_sentence,
     });
     let document_hash = vi_ledger::hash_payload(&json!({"markdown": md, "payload": payload}));
     let package_id = Uuid::new_v4();

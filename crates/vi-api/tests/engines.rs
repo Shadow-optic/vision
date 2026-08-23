@@ -157,6 +157,13 @@ async fn reckoning_scores_only_substantiated_evidence() {
     assert!(md.contains("State Bar of California"));
     assert!(md.contains("does not seek a predetermined sanction"));
 
+    let (_, sent) = vi_reckoning::generate(&pool, &ledger, actor_id, "sentencing_memo")
+        .await
+        .unwrap();
+    assert!(sent.contains("Sentencing Advocacy"));
+    assert!(sent.contains("statutory maximum"));
+    assert!(sent.contains("Life imprisonment is not unlocked on this record"));
+
     let judge = Uuid::parse_str("aaaaaaaa-5555-4555-8555-555555555555").unwrap();
     let err = vi_reckoning::generate(&pool, &ledger, judge, "criminal_referral")
         .await
