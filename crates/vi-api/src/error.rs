@@ -108,6 +108,20 @@ impl From<vi_constitution::db::Error> for ApiError {
         }
     }
 }
+impl From<vi_reckoning::Error> for ApiError {
+    fn from(e: vi_reckoning::Error) -> Self {
+        match e {
+            vi_reckoning::Error::InvalidRole(s) | vi_reckoning::Error::InvalidKind(s) => {
+                Self::bad_req(s)
+            }
+            vi_reckoning::Error::InvalidName
+            | vi_reckoning::Error::InsufficientEvidence
+            | vi_reckoning::Error::PublicationBlocked => Self::bad_req(e.to_string()),
+            vi_reckoning::Error::NotFound => Self::not_found(),
+            other => Self::internal(other),
+        }
+    }
+}
 impl From<serde_json::Error> for ApiError {
     fn from(e: serde_json::Error) -> Self {
         Self::bad_req(e.to_string())

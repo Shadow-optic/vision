@@ -65,7 +65,7 @@ async fn all_engines_wired_over_http() {
     assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let catalog = json_body(&body);
     assert_eq!(catalog["backend"], "vi-api");
-    assert_eq!(catalog["engines"].as_array().unwrap().len(), 13);
+    assert_eq!(catalog["engines"].as_array().unwrap().len(), 14);
 
     let (st, body) = send(app.clone(), "GET", "/tactics", None).await;
     assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
@@ -153,6 +153,103 @@ async fn all_engines_wired_over_http() {
     assert!(md.contains("Attorney Work Product"));
     assert!(md.contains("research leads"));
     assert!(md.contains("Trial-Penalty"));
+}
+
+#[tokio::test]
+async fn reckoning_engine_is_gated_and_evidence_backed() {
+    let Some(app) = router().await else {
+        eprintln!("skipping: DATABASE_URL not set");
+        return;
+    };
+
+    const DEMO_ACTOR: &str = "aaaaaaaa-1111-4111-8111-111111111111";
+    const JUDGE_ACTOR: &str = "aaaaaaaa-5555-4555-8555-555555555555";
+
+    let (st, body) = send(app.clone(), "GET", "/reckoning/wall", None).await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let wall = json_body(&body);
+    assert!(wall["entries"].as_array().unwrap().is_empty());
+    assert_eq!(wall["name"], "Public Accountability Register");
+
+    let (st, body) = send(app.clone(), "GET", "/reckoning/statutes", None).await;
+    assert_eq!(st, StatusCode::OK);
+    assert!(json_body(&body)["statutes"].as_array().unwrap().len() >= 5);
+
+    let (st, body) = send(
+        app.clone(),
+        "POST",
+        "/reckoning/resolve",
+        Some(json!({
+            "role": "prosecutor",
+            "name": "Demo Prosecutor",
+            "jurisdiction": "CA",
+            "bar_number": "CA-100001"
+        })),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let hit = json_body(&body);
+    assert_eq!(hit["actor"]["actor_id"], DEMO_ACTOR);
+    assert_eq!(hit["method"], "bar_number");
+
+    let (st, body) = send(
+        app.clone(),
+        "GET",
+        &format!("/reckoning/actors/{DEMO_ACTOR}/score"),
+        None,
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let score = json_body(&body);
+    assert!(score["score"].as_f64().unwrap() >= 28.0);
+    assert!(score["substantiated_findings"].as_i64().unwrap() >= 1);
+
+    let (st, body) = send(
+        app.clone(),
+        "POST",
+        &format!("/reckoning/actors/{DEMO_ACTOR}/package"),
+        Some(json!({"kind": "criminal_referral"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let pkg = json_body(&body);
+    let md = pkg["markdown"].as_str().unwrap();
+    assert!(md.contains("Attorney Work Product"));
+    assert!(md.contains("not a charging document"));
+    assert!(md.contains("18 U.S.C."));
+    assert!(!md.to_lowercase().contains("no mercy"));
+
+    let (st, body) = send(
+        app.clone(),
+        "POST",
+        &format!("/reckoning/actors/{JUDGE_ACTOR}/publish"),
+        Some(json!({"approved": true})),
+    )
+    .await;
+    assert_eq!(
+        st,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+
+    let (st, body) = send(
+        app.clone(),
+        "POST",
+        &format!("/reckoning/actors/{DEMO_ACTOR}/publish"),
+        Some(json!({"approved": true, "notes": "committee review of Demo v. Demo"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+
+    let (st, body) = send(app.clone(), "GET", "/reckoning/wall", None).await;
+    assert_eq!(st, StatusCode::OK);
+    let wall = json_body(&body);
+    assert!(wall["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["actor_id"] == DEMO_ACTOR));
 }
 
 #[tokio::test]

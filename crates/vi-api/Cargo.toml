@@ -29,9 +29,13 @@ vi-tactics = { path = "../vi-tactics" }
 vi-trial-penalty = { path = "../vi-trial-penalty" }
 vi-trustscript = { path = "../vi-trustscript" }
 vi-constitution = { path = "../vi-constitution" }
+vi-reckoning = { path = "../vi-reckoning" }
 
 [dev-dependencies]
 reqwest = { workspace = true }
 serde_json = { workspace = true }
 tokio = { workspace = true }
 tower = { version = "0.4", features = ["util"] }
+vi-reckoning = { path = "../vi-reckoning" }
+vi-db = { path = "../vi-db" }
+vi-ledger = { path = "../vi-ledger" }

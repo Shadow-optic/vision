@@ -36,6 +36,10 @@ pub mod events {
     pub const TACTIC_RECORDED: &str = "TacticRecorded";
     pub const OPINION_INGESTED: &str = "OpinionIngested";
     pub const CONSTITUTION_SCREEN_RUN: &str = "ConstitutionScreenRun";
+    pub const ACTOR_RESOLVED: &str = "ActorResolved";
+    pub const ABUSE_SCORE: &str = "AbuseScoreComputed";
+    pub const LEGAL_PACKAGE: &str = "LegalActionPackage";
+    pub const PUBLICATION_REVIEWED: &str = "PublicationReviewed";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -133,6 +137,19 @@ impl Ledger {
              ORDER BY seq ASC",
         )
         .bind(case_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn entries_for_actor(&self, actor_id: Uuid) -> Result<Vec<LedgerEntry>, Error> {
+        let rows = sqlx::query_as::<_, LedgerEntry>(
+            "SELECT seq,id,event_type,payload,payload_hash,prev_hash,entry_hash,created_at
+             FROM ledger_entries
+             WHERE payload->>'actor_id' = $1
+             ORDER BY seq ASC",
+        )
+        .bind(actor_id.to_string())
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)

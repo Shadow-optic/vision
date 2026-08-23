@@ -1,6 +1,6 @@
 # VisionInjustice
 
-A Rust monorepo for **systemic criminal-justice accountability**. Twelve engines operate on **public records and substantiated findings only** — no OSINT, no leaked data, no auto-publication against named individuals.
+A Rust monorepo for **systemic criminal-justice accountability**. Fourteen engines operate on **public records and substantiated findings only** — no OSINT, no leaked data, no auto-publication against named individuals.
 
 The API is an MVP that is compile-time database-URL-free (runtime-checked SQL), hash-chained, and ready to sit behind a gateway for real-world testing. It is **not** a substitute for licensed counsel, and it ships without AuthN/Z (Phase 4).
 
@@ -21,8 +21,9 @@ The API is an MVP that is compile-time database-URL-free (runtime-checked SQL), 
 | Brady recon | `vi-brady-recon` | Expected vs disclosed evidence; gaps are *leads* |
 | Trial penalty | `vi-trial-penalty` | Distributions, disparity OR, draft motion template |
 | Constitution / Bill of Rights | `vi-constitution` | Native corpus (Arts. I–VII + Amends. 1–27), 50-state dropdowns, stare-decisis resolver, advisory screens |
+| Reckoning / individual accountability | `vi-reckoning` | Named-actor resolution, formula-audited abuse scores, attorney-only referral/bar/§1983 packages, publication-gated register |
 
-`GET /engines` lists all thirteen with live row counts.
+`GET /engines` lists all fourteen with live row counts.
 
 ## Quick start
 
@@ -33,7 +34,7 @@ export DATABASE_URL=postgres://postgres:postgres@localhost:5432/visioninjustice
 # pure tests — no DB required
 cargo test -p vi-ledger -p vi-correlation -p vi-trustscript -p vi-sim -p vi-geo \
            -p vi-lasm -p vi-tactics -p vi-ingest -p vi-monell-atlas -p vi-brady-recon \
-           -p vi-trial-penalty -p vi-constitution
+           -p vi-trial-penalty -p vi-constitution -p vi-reckoning
 
 # with Postgres: applies migrations, then integration tests
 cargo test -p vi-api
@@ -105,6 +106,20 @@ curl -s -X POST localhost:8080/constitution/resolve \
   -d '{"clause_id":"amend.04.search_seizure","jurisdiction":"CA","court_level":"superior"}'
 curl -s -X POST localhost:8080/constitution/screen/22222222-2222-2222-2222-222222222222
 curl -s localhost:8080/constitution/screen/22222222-2222-2222-2222-222222222222
+
+# Reckoning Engine (individual accountability — attorney work product)
+curl -s localhost:8080/reckoning/actors
+curl -s localhost:8080/reckoning/statutes
+curl -s localhost:8080/reckoning/immunity
+curl -s localhost:8080/reckoning/wall
+curl -s localhost:8080/reckoning/actors/aaaaaaaa-1111-4111-8111-111111111111/score
+curl -s -X POST localhost:8080/reckoning/actors/aaaaaaaa-1111-4111-8111-111111111111/package \
+  -H 'content-type: application/json' \
+  -d '{"kind":"criminal_referral"}'
+# Public register stays empty until Evidence Review Committee approval:
+curl -s -X POST localhost:8080/reckoning/actors/aaaaaaaa-1111-4111-8111-111111111111/publish \
+  -H 'content-type: application/json' \
+  -d '{"approved":true,"notes":"committee review"}'
 ```
 
 ## Production
@@ -117,7 +132,7 @@ Runs Postgres, `vi-api` on `:8080`, and `vi-ingest` (fixture source on a 300s lo
 
 - `GET /health` — liveness
 - `GET /ready` — database ping
-- `GET /engines` — thirteen-engine catalog + row counts
+- `GET /engines` — fourteen-engine catalog + row counts
 - `BIND_ADDR` (default `0.0.0.0:8080`), `DATABASE_URL`, `DATABASE_MAX_CONNECTIONS`
 - Graceful shutdown on SIGINT/SIGTERM
 - Request tracing, 60s timeouts, permissive CORS (replace with an allow-list behind your gateway)
@@ -126,11 +141,11 @@ Runs Postgres, `vi-api` on `:8080`, and `vi-ingest` (fixture source on a 300s lo
 
 ## Guardrails (non-negotiable)
 
-1. **Defamation** — automated flags are never published against named prosecutors until an attorney-led Evidence Review Committee sets `review_status = substantiated`.
+1. **Defamation** — automated flags are never published against named prosecutors until an attorney-led Evidence Review Committee sets `review_status = substantiated`. The Reckoning public register additionally requires a separate publication approval. No photos, home addresses, or private contact data.
 2. **Correlation ≠ causation** — every motion-facing statistic carries CI, *n*, and formula.
 3. **Simulator honesty** — `p_conviction` weights are a transparent prior model. `POST /simulate/from-case/:id` fills them from office/judge public-record rates; calibrate further from `vi-correlation` before citing.
 4. **Data licensing** — PACER fees/ToS; CourtListener/RECAP and state portals have their own terms. Race/ethnicity fields require counsel review.
-5. **UPL** — LASM / Monell / trial-penalty / constitution-screen Markdown is attorney work product. The public portal stays informational. Constitutional screens are **not legal advice** and never a finding of violation.
+5. **UPL** — LASM / Monell / trial-penalty / constitution-screen / Reckoning Markdown is attorney work product. The public portal stays informational. Constitutional screens and Reckoning packages are **not legal advice**, not charging documents, and never a finding of violation or a requested sentence.
 6. **Lawful inputs only** — court opinions, dockets, public settlements, bar records, FOIA disclosures. Sealed, juvenile, expunged, and non-public records are excluded.
 7. **Incomplete holdings** — the Constitution text is complete (Preamble, Articles I–VII, Amendments 1–27). The interpretation snapshot is curated criminal-procedure doctrine plus 50-state charter analogs. Circuit splits stay `unsettled`. It is not a citator.
 
@@ -151,6 +166,7 @@ crates/
 ├── vi-brady-recon/    Brady gap engine
 ├── vi-trial-penalty/  Trial Penalty Observatory
 ├── vi-constitution/   U.S. Constitution + Bill of Rights + 50-state analogs
+├── vi-reckoning/      Individual accountability (named actors, referrals, gated register)
 └── vi-api/            Axum HTTP API
 worker/                Cloudflare Worker landing page (Workers Builds)
 wrangler.jsonc

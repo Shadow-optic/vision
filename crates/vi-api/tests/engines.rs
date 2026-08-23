@@ -131,3 +131,35 @@ async fn trustscript_seed_rules_fire() {
             .unwrap();
     assert_eq!(n, 50);
 }
+
+#[tokio::test]
+async fn reckoning_scores_only_substantiated_evidence() {
+    let Some(pool) = pool().await else {
+        return;
+    };
+    vi_db::migrate(&pool).await.unwrap();
+    let ledger = vi_ledger::Ledger::new(pool.clone());
+    let actor_id = Uuid::parse_str("aaaaaaaa-1111-4111-8111-111111111111").unwrap();
+
+    let score = vi_reckoning::score_actor(&pool, Some(&ledger), actor_id)
+        .await
+        .unwrap();
+    assert!(
+        (score.score - 28.0).abs() < 1e-9,
+        "one substantiated Brady finding, one source, recent → 28, got {}",
+        score.score
+    );
+
+    let (pkg, md) = vi_reckoning::generate(&pool, &ledger, actor_id, "bar_complaint")
+        .await
+        .unwrap();
+    assert_eq!(pkg.action_kind, "bar_complaint");
+    assert!(md.contains("State Bar of California"));
+    assert!(md.contains("does not seek a predetermined sanction"));
+
+    let judge = Uuid::parse_str("aaaaaaaa-5555-4555-8555-555555555555").unwrap();
+    let err = vi_reckoning::generate(&pool, &ledger, judge, "criminal_referral")
+        .await
+        .expect_err("judge has no substantiated findings");
+    assert!(matches!(err, vi_reckoning::Error::InsufficientEvidence));
+}

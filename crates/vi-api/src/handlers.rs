@@ -800,11 +800,13 @@ pub async fn lasm_package(
     .bind(case_id)
     .fetch_optional(&st.pool)
     .await?
-    .map(|(jurisdiction, hit_count, authority)| vi_lasm::ConstitutionSummary {
-        jurisdiction,
-        hit_count: hit_count as i64,
-        authority,
-    });
+    .map(
+        |(jurisdiction, hit_count, authority)| vi_lasm::ConstitutionSummary {
+            jurisdiction,
+            hit_count: hit_count as i64,
+            authority,
+        },
+    );
 
     let md = vi_lasm::render(&vi_lasm::EvidencePackage {
         caption,
@@ -1095,6 +1097,9 @@ pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError
     let provisions: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM constitution_provisions")
         .fetch_one(&st.pool)
         .await?;
+    let actors: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accountability_actors")
+        .fetch_one(&st.pool)
+        .await?;
 
     Ok(Json(json!({
         "backend": "vi-api",
@@ -1125,7 +1130,9 @@ pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError
             {"name": "Trial penalty", "crate": "vi-trial-penalty", "rows": cases,
              "routes": ["/trial-penalty/offices", "/trial-penalty/heatmap", "/trial-penalty/disparity", "/trial-penalty/motion"]},
             {"name": "Constitution / Bill of Rights", "crate": "vi-constitution", "rows": provisions,
-             "routes": ["/constitution", "/constitution/options", "/constitution/jurisdictions", "/constitution/provisions", "/constitution/resolve", "/constitution/screen/:case_id"]}
+             "routes": ["/constitution", "/constitution/options", "/constitution/jurisdictions", "/constitution/provisions", "/constitution/resolve", "/constitution/screen/:case_id"]},
+            {"name": "Reckoning / individual accountability", "crate": "vi-reckoning", "rows": actors,
+             "routes": ["/reckoning/actors", "/reckoning/resolve", "/reckoning/actors/:id/package", "/reckoning/wall", "/reckoning/statutes"]}
         ]
     })))
 }
