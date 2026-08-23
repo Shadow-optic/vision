@@ -1132,7 +1132,7 @@ pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError
             {"name": "Constitution / Bill of Rights", "crate": "vi-constitution", "rows": provisions,
              "routes": ["/constitution", "/constitution/options", "/constitution/jurisdictions", "/constitution/provisions", "/constitution/resolve", "/constitution/screen/:case_id"]},
             {"name": "Reckoning / individual accountability", "crate": "vi-reckoning", "rows": actors,
-             "routes": ["/reckoning/actors", "/reckoning/resolve", "/reckoning/actors/:id/package", "/reckoning/wall", "/reckoning/statutes"]}
+             "routes": ["/reckoning/actors", "/reckoning/resolve", "/reckoning/actors/:id/package", "/reckoning/wall", "/reckoning/wall/:id", "/reckoning/statutes"]}
         ]
     })))
 }

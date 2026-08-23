@@ -1,6 +1,6 @@
 # VisionInjustice
 
-A Rust monorepo for **systemic criminal-justice accountability**. Fourteen engines operate on **public records and substantiated findings only** — no OSINT, no leaked data, no auto-publication against named individuals.
+A Rust monorepo for **systemic criminal-justice accountability**. Fourteen engines operate on **public records and counsel-substantiated findings only** — no OSINT, no leaked data, no publication of pending automated flags. After licensed counsel substantiates a public-record finding, the official's public-record identity and those findings are published. The engines do not charge anyone.
 
 The API is an MVP that is compile-time database-URL-free (runtime-checked SQL), hash-chained, and ready to sit behind a gateway for real-world testing. It is **not** a substitute for licensed counsel, and it ships without AuthN/Z (Phase 4).
 
@@ -21,7 +21,7 @@ The API is an MVP that is compile-time database-URL-free (runtime-checked SQL), 
 | Brady recon | `vi-brady-recon` | Expected vs disclosed evidence; gaps are *leads* |
 | Trial penalty | `vi-trial-penalty` | Distributions, disparity OR, draft motion template |
 | Constitution / Bill of Rights | `vi-constitution` | Native corpus (Arts. I–VII + Amends. 1–27), 50-state dropdowns, stare-decisis resolver, advisory screens |
-| Reckoning / individual accountability | `vi-reckoning` | Named-actor resolution, formula-audited abuse scores, attorney-only referral/bar/§1983 packages, publication-gated register |
+| Reckoning / individual accountability | `vi-reckoning` | Named-actor resolution, formula-audited abuse scores, counsel-reviewed referral/bar/§1983 packages, Wall of Injustice for substantiated public-record findings |
 
 `GET /engines` lists all fourteen with live row counts.
 
@@ -107,19 +107,18 @@ curl -s -X POST localhost:8080/constitution/resolve \
 curl -s -X POST localhost:8080/constitution/screen/22222222-2222-2222-2222-222222222222
 curl -s localhost:8080/constitution/screen/22222222-2222-2222-2222-222222222222
 
-# Reckoning Engine (individual accountability — attorney work product)
-curl -s localhost:8080/reckoning/actors
-curl -s localhost:8080/reckoning/statutes
-curl -s localhost:8080/reckoning/immunity
+# Reckoning Engine (counsel reviews; public-record findings publish; engine does not charge)
 curl -s localhost:8080/reckoning/wall
+curl -s localhost:8080/reckoning/wall/aaaaaaaa-1111-4111-8111-111111111111
+curl -s localhost:8080/reckoning/statutes
 curl -s localhost:8080/reckoning/actors/aaaaaaaa-1111-4111-8111-111111111111/score
 curl -s -X POST localhost:8080/reckoning/actors/aaaaaaaa-1111-4111-8111-111111111111/package \
   -H 'content-type: application/json' \
   -d '{"kind":"criminal_referral"}'
-# Public register stays empty until Evidence Review Committee approval:
+# Optional counsel hold (victim privacy / correction) — not a second publish opt-in:
 curl -s -X POST localhost:8080/reckoning/actors/aaaaaaaa-1111-4111-8111-111111111111/publish \
   -H 'content-type: application/json' \
-  -d '{"approved":true,"notes":"committee review"}'
+  -d '{"approved":false,"notes":"hold for victim-privacy review"}'
 ```
 
 ## Production
@@ -141,7 +140,7 @@ Runs Postgres, `vi-api` on `:8080`, and `vi-ingest` (fixture source on a 300s lo
 
 ## Guardrails (non-negotiable)
 
-1. **Defamation** — automated flags are never published against named prosecutors until an attorney-led Evidence Review Committee sets `review_status = substantiated`. The Reckoning public register additionally requires a separate publication approval. No photos, home addresses, or private contact data.
+1. **Counsel review, then public accountability** — automated flags never publish. Licensed counsel must set `review_status = substantiated` on a public-record finding. That official-conduct record (name, office, bar/badge, citation, finding) then publishes on the Wall of Injustice. Counsel may hold a card for victim privacy or a correction. No photos, home addresses, or private contact data. The engine does not charge.
 2. **Correlation ≠ causation** — every motion-facing statistic carries CI, *n*, and formula.
 3. **Simulator honesty** — `p_conviction` weights are a transparent prior model. `POST /simulate/from-case/:id` fills them from office/judge public-record rates; calibrate further from `vi-correlation` before citing.
 4. **Data licensing** — PACER fees/ToS; CourtListener/RECAP and state portals have their own terms. Race/ethnicity fields require counsel review.
@@ -166,7 +165,7 @@ crates/
 ├── vi-brady-recon/    Brady gap engine
 ├── vi-trial-penalty/  Trial Penalty Observatory
 ├── vi-constitution/   U.S. Constitution + Bill of Rights + 50-state analogs
-├── vi-reckoning/      Individual accountability (named actors, referrals, gated register)
+├── vi-reckoning/      Individual accountability (named actors, referrals, public register)
 └── vi-api/            Axum HTTP API
 worker/                Cloudflare Worker landing page (Workers Builds)
 wrangler.jsonc

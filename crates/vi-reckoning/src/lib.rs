@@ -1,13 +1,11 @@
 //! Reckoning Engine — individual accountability from public records.
 //!
 //! Focus is named humans (prosecutor, officer, judge, expert), not offices.
-//! Outputs are attorney work product: criminal-referral drafts, §1983
-//! scaffolds, bar complaints, and statutory-range research. Nothing is
-//! published against a named person until an Evidence Review Committee
-//! substantiates findings and separately approves publication.
-//!
-//! The engine is not a charging authority, does not file documents, and
-//! does not recommend a sentence.
+//! Licensed counsel reviews every finding. Once a finding is substantiated
+//! from public records, the official's public-record identity and those
+//! findings are published on the Wall of Injustice. The engine does not
+//! charge, file, or sentence anyone — humans do that. Pending automated
+//! flags never publish.
 #![forbid(unsafe_code)]
 
 pub mod dashboard;
@@ -37,11 +35,11 @@ pub enum Error {
     NotFound,
     #[error("no substantiated public-record evidence for this actor")]
     InsufficientEvidence,
-    #[error("publication requires at least one substantiated finding")]
+    #[error("cannot publish: no counsel-substantiated public-record finding")]
     PublicationBlocked,
 }
 
-pub use dashboard::{set_publication, tracker, wall, TrackerRow, WallEntry};
+pub use dashboard::{set_publication, tracker, wall, wall_profile, TrackerRow, WallEntry};
 pub use entity::{list, resolve, sync_from_public_records, Actor, ResolveHit, ResolveQuery};
 pub use package::{generate, get_package, list_packages, StoredPackage};
 pub use score::{score_actor, AbuseScore};

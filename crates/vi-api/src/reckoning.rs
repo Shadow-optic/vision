@@ -127,8 +127,21 @@ pub async fn wall(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
     Ok(Json(json!({
         "name": "Public Accountability Register",
         "also_known_as": "Wall of Injustice",
-        "gate": "substantiated findings + Evidence Review Committee publication approval",
+        "gate": "licensed-counsel substantiation of public-record findings; pending flags never publish",
+        "charges": false,
         "entries": entries,
+    })))
+}
+
+pub async fn wall_profile(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+) -> Result<Json<Value>, ApiError> {
+    let entry = vi_reckoning::wall_profile(&st.pool, id).await?;
+    Ok(Json(json!({
+        "name": "Public Accountability Register",
+        "charges": false,
+        "entry": entry,
     })))
 }
 
@@ -159,7 +172,11 @@ pub async fn publish(
         body.notes,
     )
     .await?;
-    Ok(Json(json!({ "actor_id": id, "approved": body.approved })))
+    Ok(Json(json!({
+        "actor_id": id,
+        "approved": body.approved,
+        "effect": if body.approved { "publish" } else { "hold" },
+    })))
 }
 
 pub async fn statute_catalog() -> Json<Value> {

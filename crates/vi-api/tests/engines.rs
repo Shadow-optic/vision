@@ -162,4 +162,12 @@ async fn reckoning_scores_only_substantiated_evidence() {
         .await
         .expect_err("judge has no substantiated findings");
     assert!(matches!(err, vi_reckoning::Error::InsufficientEvidence));
+
+    let wall = vi_reckoning::wall(&pool).await.unwrap();
+    assert!(
+        wall.iter()
+            .any(|e| e.actor_id == actor_id && e.substantiated_findings >= 1),
+        "substantiated public-record findings publish after counsel review"
+    );
+    assert!(!wall.iter().any(|e| e.actor_id == judge));
 }

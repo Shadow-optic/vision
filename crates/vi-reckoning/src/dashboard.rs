@@ -1,10 +1,17 @@
 //! Public Accountability Register (Wall of Injustice).
-//! Named individuals appear only after substantiated findings *and*
-//! attorney publication approval. No photos, no private contact data.
+//!
+//! Counsel review (`review_status = substantiated`) is the publication gate.
+//! Once a finding drawn from public records is substantiated, the official's
+//! public-record identity and those findings are published. The engine does
+//! not charge anyone. Counsel may place a hold for victim privacy or a
+//! pending correction — that is a suppression, not a second opt-in.
+//!
+//! Pending TrustScript flags never appear. No photos, home addresses, or
+//! private contact data.
 #![forbid(unsafe_code)]
 
 use serde::Serialize;
-use serde_json::json;
+use serde_json::{json, Value};
 use sqlx::PgPool;
 use uuid::Uuid;
 use vi_ledger::Ledger;
@@ -18,7 +25,10 @@ pub struct WallEntry {
     pub display_name: String,
     pub office: Option<String>,
     pub jurisdiction: String,
+    pub bar_number: Option<String>,
+    pub badge_number: Option<String>,
     pub substantiated_findings: i64,
+    pub public_records: Value,
     pub status: String,
 }
 
@@ -33,28 +43,88 @@ pub struct TrackerRow {
 
 pub async fn wall(pool: &PgPool) -> Result<Vec<WallEntry>, Error> {
     Ok(sqlx::query_as::<_, WallEntry>(
-        r#"SELECT a.actor_id, a.role, a.display_name, a.office, a.jurisdiction,
-                  (SELECT COUNT(*) FROM constitutional_findings f
-                    WHERE f.prosecutor_id = a.prosecutor_id
-                      AND f.review_status = 'substantiated') AS substantiated_findings,
-                  CASE
-                    WHEN EXISTS (
-                      SELECT 1 FROM legal_action_packages p
-                       WHERE p.actor_id = a.actor_id AND p.status = 'referred'
-                    ) THEN 'referred'
-                    ELSE 'substantiated'
-                  END AS status
-           FROM accountability_actors a
-           JOIN publication_approvals pa ON pa.actor_id = a.actor_id AND pa.approved = true
-           WHERE EXISTS (
+        "SELECT a.actor_id, a.role, a.display_name, a.office, a.jurisdiction,
+                a.bar_number, a.badge_number,
+                (SELECT COUNT(*) FROM constitutional_findings f
+                  WHERE f.prosecutor_id = a.prosecutor_id
+                    AND f.review_status = 'substantiated') AS substantiated_findings,
+                COALESCE((
+                  SELECT jsonb_agg(jsonb_build_object(
+                           'finding_type', f.finding_type,
+                           'citation', f.source_citation,
+                           'summary', f.summary,
+                           'finding_date', f.finding_date,
+                           'source_url', f.source_url
+                         ) ORDER BY f.finding_date)
+                  FROM constitutional_findings f
+                  WHERE f.prosecutor_id = a.prosecutor_id
+                    AND f.review_status = 'substantiated'
+                ), '[]'::jsonb) AS public_records,
+                CASE
+                  WHEN EXISTS (
+                    SELECT 1 FROM legal_action_packages p
+                     WHERE p.actor_id = a.actor_id AND p.status = 'referred'
+                  ) THEN 'referred'
+                  ELSE 'substantiated'
+                END AS status
+         FROM accountability_actors a
+         WHERE EXISTS (
+           SELECT 1 FROM constitutional_findings f
+            WHERE f.prosecutor_id = a.prosecutor_id
+              AND f.review_status = 'substantiated'
+         )
+         AND NOT EXISTS (
+           SELECT 1 FROM publication_approvals pa
+            WHERE pa.actor_id = a.actor_id AND pa.approved = false
+         )
+         ORDER BY substantiated_findings DESC, a.display_name",
+    )
+    .fetch_all(pool)
+    .await?)
+}
+
+pub async fn wall_profile(pool: &PgPool, actor_id: Uuid) -> Result<WallEntry, Error> {
+    sqlx::query_as::<_, WallEntry>(
+        "SELECT a.actor_id, a.role, a.display_name, a.office, a.jurisdiction,
+                a.bar_number, a.badge_number,
+                (SELECT COUNT(*) FROM constitutional_findings f
+                  WHERE f.prosecutor_id = a.prosecutor_id
+                    AND f.review_status = 'substantiated') AS substantiated_findings,
+                COALESCE((
+                  SELECT jsonb_agg(jsonb_build_object(
+                           'finding_type', f.finding_type,
+                           'citation', f.source_citation,
+                           'summary', f.summary,
+                           'finding_date', f.finding_date,
+                           'source_url', f.source_url
+                         ) ORDER BY f.finding_date)
+                  FROM constitutional_findings f
+                  WHERE f.prosecutor_id = a.prosecutor_id
+                    AND f.review_status = 'substantiated'
+                ), '[]'::jsonb) AS public_records,
+                CASE
+                  WHEN EXISTS (
+                    SELECT 1 FROM legal_action_packages p
+                     WHERE p.actor_id = a.actor_id AND p.status = 'referred'
+                  ) THEN 'referred'
+                  ELSE 'substantiated'
+                END AS status
+         FROM accountability_actors a
+         WHERE a.actor_id = $1
+           AND EXISTS (
              SELECT 1 FROM constitutional_findings f
               WHERE f.prosecutor_id = a.prosecutor_id
                 AND f.review_status = 'substantiated'
            )
-           ORDER BY substantiated_findings DESC, a.display_name"#,
+           AND NOT EXISTS (
+             SELECT 1 FROM publication_approvals pa
+              WHERE pa.actor_id = a.actor_id AND pa.approved = false
+           )",
     )
-    .fetch_all(pool)
-    .await?)
+    .bind(actor_id)
+    .fetch_optional(pool)
+    .await?
+    .ok_or(Error::NotFound)
 }
 
 pub async fn tracker(pool: &PgPool) -> Result<Vec<TrackerRow>, Error> {
@@ -62,8 +132,16 @@ pub async fn tracker(pool: &PgPool) -> Result<Vec<TrackerRow>, Error> {
         r#"SELECT p.package_id, p.actor_id, a.display_name, p.action_kind, p.status
            FROM legal_action_packages p
            JOIN accountability_actors a ON a.actor_id = p.actor_id
-           JOIN publication_approvals pa ON pa.actor_id = a.actor_id AND pa.approved = true
            WHERE p.status IN ('attorney_reviewed','referred')
+             AND EXISTS (
+               SELECT 1 FROM constitutional_findings f
+                WHERE f.prosecutor_id = a.prosecutor_id
+                  AND f.review_status = 'substantiated'
+             )
+             AND NOT EXISTS (
+               SELECT 1 FROM publication_approvals pa
+                WHERE pa.actor_id = a.actor_id AND pa.approved = false
+             )
            ORDER BY p.created_at DESC
            LIMIT 200"#,
     )
@@ -71,6 +149,8 @@ pub async fn tracker(pool: &PgPool) -> Result<Vec<TrackerRow>, Error> {
     .await?)
 }
 
+/// `approved = true` publishes (default once counsel substantiates).
+/// `approved = false` holds the public card (victim privacy / correction).
 pub async fn set_publication(
     pool: &PgPool,
     ledger: &Ledger,
@@ -117,6 +197,7 @@ pub async fn set_publication(
             &json!({
                 "actor_id": actor_id,
                 "approved": approved,
+                "effect": if approved { "publish" } else { "hold" },
             }),
         )
         .await?;

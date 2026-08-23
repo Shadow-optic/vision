@@ -168,8 +168,24 @@ async fn reckoning_engine_is_gated_and_evidence_backed() {
     let (st, body) = send(app.clone(), "GET", "/reckoning/wall", None).await;
     assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let wall = json_body(&body);
-    assert!(wall["entries"].as_array().unwrap().is_empty());
     assert_eq!(wall["name"], "Public Accountability Register");
+    assert_eq!(wall["charges"], false);
+    assert!(
+        wall["entries"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|e| e["actor_id"] == DEMO_ACTOR
+                && e["public_records"].as_array().unwrap().iter().any(|r| {
+                    r["finding_type"] == "brady" && r["citation"] == "Demo v. Demo (2024)"
+                })),
+        "counsel-substantiated public-record findings publish without a second opt-in"
+    );
+    assert!(!wall["entries"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|e| e["actor_id"] == JUDGE_ACTOR));
 
     let (st, body) = send(app.clone(), "GET", "/reckoning/statutes", None).await;
     assert_eq!(st, StatusCode::OK);
@@ -235,21 +251,40 @@ async fn reckoning_engine_is_gated_and_evidence_backed() {
 
     let (st, body) = send(
         app.clone(),
-        "POST",
-        &format!("/reckoning/actors/{DEMO_ACTOR}/publish"),
-        Some(json!({"approved": true, "notes": "committee review of Demo v. Demo"})),
+        "GET",
+        &format!("/reckoning/wall/{DEMO_ACTOR}"),
+        None,
     )
     .await;
     assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(json_body(&body)["entry"]["display_name"], "Demo Prosecutor");
+
+    let (st, body) = send(
+        app.clone(),
+        "POST",
+        &format!("/reckoning/actors/{DEMO_ACTOR}/publish"),
+        Some(json!({"approved": false, "notes": "hold for victim-privacy review"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    assert_eq!(json_body(&body)["effect"], "hold");
 
     let (st, body) = send(app.clone(), "GET", "/reckoning/wall", None).await;
     assert_eq!(st, StatusCode::OK);
-    let wall = json_body(&body);
-    assert!(wall["entries"]
+    assert!(!json_body(&body)["entries"]
         .as_array()
         .unwrap()
         .iter()
         .any(|e| e["actor_id"] == DEMO_ACTOR));
+
+    let (st, body) = send(
+        app,
+        "POST",
+        &format!("/reckoning/actors/{DEMO_ACTOR}/publish"),
+        Some(json!({"approved": true, "notes": "hold lifted"})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
 }
 
 #[tokio::test]

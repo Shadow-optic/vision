@@ -102,6 +102,7 @@ pub fn router(state: AppState) -> Router {
         .route("/reckoning/packages", get(reckoning::list_packages))
         .route("/reckoning/packages/:id", get(reckoning::get_package))
         .route("/reckoning/wall", get(reckoning::wall))
+        .route("/reckoning/wall/:id", get(reckoning::wall_profile))
         .route("/reckoning/tracker", get(reckoning::tracker))
         .route("/reckoning/statutes", get(reckoning::statute_catalog))
         .route("/reckoning/immunity", get(reckoning::immunity_catalog))
