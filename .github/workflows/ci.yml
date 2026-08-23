@@ -41,4 +41,4 @@ jobs:
       - name: Integration tests
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/visioninjustice
-        run: cargo test --workspace -- --nocapture
+        run: cargo test --workspace -- --test-threads=1 --nocapture
