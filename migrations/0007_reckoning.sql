@@ -33,9 +33,10 @@ CREATE TABLE actor_aliases (
     alias       TEXT NOT NULL,
     source      TEXT NOT NULL,
     confidence  REAL NOT NULL CHECK (confidence >= 0 AND confidence <= 1),
-    created_at  TIMESTAMPTZ NOT NULL DEFAULT now(),
-    UNIQUE (actor_id, lower(alias), source)
+    created_at  TIMESTAMPTZ NOT NULL DEFAULT now()
 );
+CREATE UNIQUE INDEX actor_aliases_uidx
+    ON actor_aliases (actor_id, lower(alias), source);
 
 CREATE TABLE actor_case_links (
     link_id      UUID PRIMARY KEY DEFAULT gen_random_uuid(),
