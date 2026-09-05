@@ -35,3 +35,6 @@ dist-ssr
 .wrangler
 .dev.vars*
 !.dev.vars.example
+
+# Wrangler dry-run output
+/dist

@@ -3,11 +3,20 @@
 	"private": true,
 	"type": "module",
 	"scripts": {
-		"build": "echo 'TypeScript Worker — wrangler compiles at deploy'",
-		"check": "wrangler deploy --dry-run --outdir=/tmp/wrangler-dry-run",
+		"dev": "wrangler dev",
+		"dev:fixtures": "node --experimental-strip-types scripts/fixture-backend.mts",
+		"build": "wrangler deploy --dry-run --outdir=dist",
+		"check": "npm run typecheck && npm run build",
+		"typecheck": "tsc --noEmit -p tsconfig.json && tsc --noEmit -p test/tsconfig.json",
+		"test": "vitest run",
+		"catalog": "cargo run -q -p vi-reckoning --bin catalog > worker/data/catalog.json",
 		"deploy": "wrangler deploy"
 	},
 	"devDependencies": {
-		"wrangler": "4.88.0"
+		"@cloudflare/vitest-pool-workers": "^0.22.0",
+		"@cloudflare/workers-types": "^4.20260702.1",
+		"typescript": "^7.0.2",
+		"vitest": "^4.1.0",
+		"wrangler": "^4.129.0"
 	}
 }
