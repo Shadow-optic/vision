@@ -42,3 +42,26 @@ jobs:
         env:
           DATABASE_URL: postgres://postgres:postgres@localhost:5432/visioninjustice
         run: cargo test --workspace -- --test-threads=1 --nocapture
+
+  web:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@1.88.0
+      - uses: Swatinem/rust-cache@v2
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+      - name: Statute catalog is in sync with the Rust source
+        run: |
+          cargo run -q -p vi-reckoning --bin catalog > /tmp/catalog.json
+          diff -u worker/data/catalog.json /tmp/catalog.json \
+            || { echo "::error::worker/data/catalog.json is stale — run 'npm run catalog'"; exit 1; }
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Worker tests
+        run: npm test
+      - name: Build the Worker
+        run: npm run build
