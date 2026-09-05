@@ -4,6 +4,7 @@
 pub mod constitution;
 pub mod error;
 pub mod handlers;
+pub mod reckoning;
 
 use axum::{
     routing::{get, post},
@@ -85,5 +86,25 @@ pub fn router(state: AppState) -> Router {
             "/constitution/screen/:case_id",
             get(constitution::screen_report).post(constitution::screen_run),
         )
+        .route("/reckoning/actors", get(reckoning::list_actors))
+        .route("/reckoning/actors/:id", get(reckoning::get_actor))
+        .route(
+            "/reckoning/actors/:id/score",
+            get(reckoning::get_score).post(reckoning::persist_score),
+        )
+        .route(
+            "/reckoning/actors/:id/package",
+            post(reckoning::generate_package),
+        )
+        .route("/reckoning/actors/:id/publish", post(reckoning::publish))
+        .route("/reckoning/resolve", post(reckoning::resolve))
+        .route("/reckoning/sync", post(reckoning::sync))
+        .route("/reckoning/packages", get(reckoning::list_packages))
+        .route("/reckoning/packages/:id", get(reckoning::get_package))
+        .route("/reckoning/wall", get(reckoning::wall))
+        .route("/reckoning/wall/:id", get(reckoning::wall_profile))
+        .route("/reckoning/tracker", get(reckoning::tracker))
+        .route("/reckoning/statutes", get(reckoning::statute_catalog))
+        .route("/reckoning/immunity", get(reckoning::immunity_catalog))
         .with_state(state)
 }

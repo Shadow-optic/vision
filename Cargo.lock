@@ -2444,6 +2444,7 @@ dependencies = [
  "vi-lasm",
  "vi-ledger",
  "vi-monell-atlas",
+ "vi-reckoning",
  "vi-sim",
  "vi-tactics",
  "vi-trial-penalty",
@@ -2550,6 +2551,20 @@ dependencies = [
 
 [[package]]
 name = "vi-monell-atlas"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "handlebars",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "uuid",
+ "vi-ledger",
+]
+
+[[package]]
+name = "vi-reckoning"
 version = "0.1.0"
 dependencies = [
  "chrono",

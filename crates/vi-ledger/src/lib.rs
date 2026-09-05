@@ -36,6 +36,10 @@ pub mod events {
     pub const TACTIC_RECORDED: &str = "TacticRecorded";
     pub const OPINION_INGESTED: &str = "OpinionIngested";
     pub const CONSTITUTION_SCREEN_RUN: &str = "ConstitutionScreenRun";
+    pub const ACTOR_RESOLVED: &str = "ActorResolved";
+    pub const ABUSE_SCORE: &str = "AbuseScoreComputed";
+    pub const LEGAL_PACKAGE: &str = "LegalActionPackage";
+    pub const PUBLICATION_REVIEWED: &str = "PublicationReviewed";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]
@@ -95,12 +99,18 @@ impl Ledger {
         let created_at = DateTime::from_timestamp_micros(ts_micros).expect("in range");
 
         let mut tx = self.pool.begin().await?;
-        let prev_hash: String = sqlx::query_scalar(
-            "SELECT entry_hash FROM ledger_entries ORDER BY seq DESC LIMIT 1 FOR UPDATE",
-        )
-        .fetch_optional(&mut *tx)
-        .await?
-        .unwrap_or_else(|| GENESIS.to_string());
+        // Advisory lock serializes tip-read + insert. FOR UPDATE on the current
+        // tail row is not enough: a waiter can re-lock the old tip after a
+        // concurrent insert commits and fork the chain.
+        sqlx::query("SELECT pg_advisory_xact_lock($1)")
+            .bind(0x5649_4C45_4447i64)
+            .execute(&mut *tx)
+            .await?;
+        let prev_hash: String =
+            sqlx::query_scalar("SELECT entry_hash FROM ledger_entries ORDER BY seq DESC LIMIT 1")
+                .fetch_optional(&mut *tx)
+                .await?
+                .unwrap_or_else(|| GENESIS.to_string());
 
         let entry_hash = compute_entry_hash(&prev_hash, &payload_hash, ts_micros);
         let id = Uuid::new_v4();
@@ -133,6 +143,19 @@ impl Ledger {
              ORDER BY seq ASC",
         )
         .bind(case_id.to_string())
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows)
+    }
+
+    pub async fn entries_for_actor(&self, actor_id: Uuid) -> Result<Vec<LedgerEntry>, Error> {
+        let rows = sqlx::query_as::<_, LedgerEntry>(
+            "SELECT seq,id,event_type,payload,payload_hash,prev_hash,entry_hash,created_at
+             FROM ledger_entries
+             WHERE payload->>'actor_id' = $1
+             ORDER BY seq ASC",
+        )
+        .bind(actor_id.to_string())
         .fetch_all(&self.pool)
         .await?;
         Ok(rows)
