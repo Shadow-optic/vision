@@ -2,7 +2,9 @@
 
 A Rust monorepo for **systemic criminal-justice accountability**. Fourteen engines operate on **public records and counsel-substantiated findings only** — no OSINT, no leaked data, no publication of pending automated flags. After licensed counsel substantiates a public-record finding, the official's public-record identity and those findings are published. The engines do not file charges. After a conviction they advocate for the statutory maximum the same law provides, including life imprisonment where 18 U.S.C. §§ 241, 242, or 1512 authorize it.
 
-The API is an MVP that is compile-time database-URL-free (runtime-checked SQL), hash-chained, and ready to sit behind a gateway for real-world testing. It is **not** a substitute for licensed counsel, and it ships without AuthN/Z (Phase 4).
+The engines run as a Rust service (`vi-api`) behind a gateway. The public platform is a Cloudflare Worker that renders the Wall of Injustice, the statute and immunity catalogs, case-law search, the referral tracker, and a read-only JSON mirror — see [the public platform](#the-public-platform) and [DEPLOYMENT.md](DEPLOYMENT.md).
+
+The API is compile-time database-URL-free (runtime-checked SQL) and hash-chained. It is **not** a substitute for licensed counsel, and it ships without AuthN/Z (Phase 4).
 
 ## Engines
 
@@ -121,7 +123,42 @@ curl -s -X POST localhost:8080/reckoning/actors/aaaaaaaa-1111-4111-8111-11111111
   -d '{"approved":false,"notes":"hold for victim-privacy review"}'
 ```
 
-## Production
+## The public platform
+
+The public site is a Cloudflare Worker in [`worker/`](worker/). It renders every page at the edge and reads `vi-api` over HTTPS; it holds no database and cannot write anything.
+
+| Page | What it serves |
+|---|---|
+| `/` | Mission, the publication gate, live totals |
+| `/wall`, `/wall/:id` | Wall of Injustice register and per-official records with citations, abuse score, statute mapping, and referrals |
+| `/statutes`, `/immunity` | Elements, statutory maxima, immunity limits — generated from `vi-reckoning` |
+| `/cases` | Full-text opinion search |
+| `/tracker` | Attorney-reviewed referrals and packages |
+| `/ledger` | Hash-chain verification |
+| `/doctrine`, `/corrections` | The doctrine; how corrections and victim-privacy holds work |
+| `/engines` | The fourteen engines with live row counts |
+| `/api`, `/api/*` | Read-only JSON mirror and the documented allowlist |
+| `/healthz` | Edge and backend status for uptime checks |
+
+Enforced in code, not in copy:
+
+- **Escaping by construction.** The template layer escapes every interpolated value, so an official's name or a finding summary can never become markup.
+- **A GET-only allowlist.** `/flags`, `/reckoning/actors`, bare abuse scores, attorney work product, case-level investigative leads, and every write route are unreachable from the public domain. [`worker/proxy.ts`](worker/proxy.ts) states the reason for each exclusion.
+- **A hold is a 404.** A card under a counsel hold is indistinguishable from one that never existed.
+- **No fabricated fallbacks.** With the backend down or unset, panels say so rather than show a number they cannot source.
+- **Strict CSP**, HSTS, frame denial, no inline script or style, and separate per-client rate limits for pages and the API.
+
+```bash
+npm ci --legacy-peer-deps
+npm run dev:fixtures     # stub backend on :8788 (fictional records, local only)
+npx wrangler dev --var VI_API_ORIGIN:http://localhost:8788
+
+npm run typecheck && npm test && npm run build
+```
+
+Deployment, secrets, custom domains, and verification steps: [DEPLOYMENT.md](DEPLOYMENT.md).
+
+## Production backend
 
 ```bash
 docker compose up --build
@@ -167,8 +204,12 @@ crates/
 ├── vi-constitution/   U.S. Constitution + Bill of Rights + 50-state analogs
 ├── vi-reckoning/      Individual accountability (named actors, referrals, public register)
 └── vi-api/            Axum HTTP API
-worker/                Cloudflare Worker landing page (Workers Builds)
+worker/                Cloudflare Worker — the public platform
+├── pages/             Server-rendered pages
+├── view/              Auto-escaping templates, stylesheet, assets
+├── data/              Statute catalog generated from vi-reckoning
+├── proxy.ts           Read-only /api allowlist
+└── upstream.ts        vi-api client (timeouts, caching, degraded states)
+test/                  50 tests in the Workers runtime
 wrangler.jsonc
 ```
-
-This GitHub repo is still connected to the Cloudflare Worker named `vision`. The Worker is a static landing page (no case data). It exists so **Workers Builds** can compile; the engines themselves run via `vi-api`.
