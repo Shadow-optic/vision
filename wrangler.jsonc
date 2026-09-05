@@ -6,6 +6,33 @@
 	"observability": {
 		"enabled": true
 	},
+	"vars": {
+		// Origin of the Rust `vi-api` service. Empty until the backend is
+		// published: every page then renders its offline state instead of
+		// inventing data. Override per environment or with `wrangler secret`.
+		"VI_API_ORIGIN": "",
+		"SITE_NAME": "VisionInjustice",
+		"CONTACT_EMAIL": "counsel@visioninjustice.org",
+		"ENVIRONMENT": "production"
+	},
+	"ratelimits": [
+		{
+			"name": "PAGE_LIMITER",
+			"namespace_id": "2001",
+			"simple": {
+				"limit": 600,
+				"period": 60
+			}
+		},
+		{
+			"name": "API_LIMITER",
+			"namespace_id": "2002",
+			"simple": {
+				"limit": 120,
+				"period": 60
+			}
+		}
+	],
 	"workflows": [
 		{
 			"name": "my-workflow",

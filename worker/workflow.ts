@@ -14,7 +14,7 @@ export class MyWorkflow extends WorkflowEntrypoint<
 	WorkerEnv,
 	Record<string, unknown>
 > {
-	async run(
+	override async run(
 		_event: WorkflowEvent<Record<string, unknown>>,
 		step: WorkflowStep,
 	): Promise<{ ok: true }> {
