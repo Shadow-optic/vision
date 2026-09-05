@@ -1,0 +1,76 @@
+name: deploy
+
+# Publishes the public platform to Cloudflare Workers.
+#
+# Requires two repository secrets:
+#   CLOUDFLARE_API_TOKEN   — token with the "Edit Cloudflare Workers" template
+#   CLOUDFLARE_ACCOUNT_ID  — target account
+#
+# If the repository is instead connected through Cloudflare Workers Builds, that
+# integration deploys on push and this workflow can stay disabled.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: Wrangler environment to deploy
+        required: false
+        default: ""
+
+concurrency:
+  group: deploy-worker
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    environment: production
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci --legacy-peer-deps
+
+      - name: Typecheck
+        run: npm run typecheck
+      - name: Worker tests
+        run: npm test
+
+      - name: Refuse to deploy without a backend origin
+        env:
+          VI_API_ORIGIN: ${{ vars.VI_API_ORIGIN }}
+        run: |
+          if [ -z "$VI_API_ORIGIN" ]; then
+            echo "::warning::VI_API_ORIGIN repository variable is unset — the site will deploy with every live panel in its offline state."
+          else
+            case "$VI_API_ORIGIN" in
+              https://*) echo "backend origin: $VI_API_ORIGIN" ;;
+              *) echo "::error::VI_API_ORIGIN must be an https origin"; exit 1 ;;
+            esac
+          fi
+
+      - name: Deploy
+        uses: cloudflare/wrangler-action@v3
+        with:
+          apiToken: ${{ secrets.CLOUDFLARE_API_TOKEN }}
+          accountId: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          command: >-
+            deploy
+            ${{ inputs.environment && format('--env {0}', inputs.environment) || '' }}
+            ${{ vars.VI_API_ORIGIN && format('--var VI_API_ORIGIN:{0}', vars.VI_API_ORIGIN) || '' }}
+
+      - name: Smoke-test the deployment
+        if: ${{ vars.PUBLIC_SITE_URL != '' }}
+        run: |
+          set -e
+          url="${{ vars.PUBLIC_SITE_URL }}"
+          code=$(curl -s -o /tmp/health.json -w '%{http_code}' "$url/healthz")
+          cat /tmp/health.json
+          test "$code" = "200" || { echo "::error::/healthz returned $code"; exit 1; }
+          curl -sf "$url/" > /dev/null
+          curl -sf "$url/wall" > /dev/null
+          curl -sf "$url/statutes" > /dev/null
