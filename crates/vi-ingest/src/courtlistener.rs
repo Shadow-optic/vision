@@ -226,6 +226,54 @@ pub async fn fetch_court(court_id: &str) -> Result<Option<CourtRecord>> {
     Ok(court_record(body))
 }
 
+/// How long a completed court list is trusted before it is crawled again.
+/// Courts are created and retired a handful of times a year, and one that is
+/// missing is fetched by name on demand, so a daily refresh is generous.
+const REFRESH_AFTER_HOURS: i64 = 24;
+
+/// A cursor that records a finished crawl rather than an empty one.
+const COMPLETE_PREFIX: &str = "complete:";
+
+fn complete_marker(at: chrono::DateTime<chrono::Utc>) -> String {
+    format!("{COMPLETE_PREFIX}{}", at.to_rfc3339())
+}
+
+/// Where a poll of a paginated list should start.
+enum Resume {
+    /// No saved place: start at the first page.
+    Head,
+    /// Stopped part-way through; this is the page it stopped on.
+    Page(String),
+    /// Read to the end at this time, and not yet due for another pass.
+    Complete(chrono::DateTime<chrono::Utc>),
+}
+
+fn resume(cursor: Option<&str>) -> Resume {
+    let Some(cursor) = cursor.map(str::trim).filter(|c| !c.is_empty()) else {
+        return Resume::Head;
+    };
+    if let Some(at) = cursor.strip_prefix(COMPLETE_PREFIX) {
+        // An unparseable or stale marker is treated as due: crawling again
+        // costs a rate limit, while skipping on a value we cannot read would
+        // silently stop refreshing the list altogether.
+        return match chrono::DateTime::parse_from_rfc3339(at.trim()) {
+            Ok(at) => {
+                let at = at.with_timezone(&chrono::Utc);
+                if chrono::Utc::now() - at < chrono::Duration::hours(REFRESH_AFTER_HOURS) {
+                    Resume::Complete(at)
+                } else {
+                    Resume::Head
+                }
+            }
+            Err(_) => Resume::Head,
+        };
+    }
+    if cursor.contains("/courts/") {
+        return Resume::Page(cursor.to_string());
+    }
+    Resume::Head
+}
+
 impl CourtRegistry {
     pub fn new(pages: usize) -> Result<Self> {
         Ok(Self {
@@ -262,18 +310,52 @@ impl Source for CourtRegistry {
     }
 
     async fn poll(&self, cursor: Option<&str>) -> Result<PollResult> {
-        let mut url = cursor
-            .filter(|c| c.contains("/courts/"))
-            .map(str::to_string)
-            .unwrap_or_else(|| self.head_url());
+        let mut url = match resume(cursor) {
+            Resume::Head => self.head_url(),
+            Resume::Page(url) => url,
+            // The list was read to the end recently. Re-reading a few hundred
+            // pages to learn nothing is how this feed spent its rate limit and
+            // then failed; a court missing from the list is looked up by name
+            // on demand, so waiting costs no coverage.
+            Resume::Complete(at) => {
+                let due = at + chrono::Duration::hours(REFRESH_AFTER_HOURS);
+                return Ok(PollResult {
+                    next_cursor: Some(complete_marker(at)),
+                    paused: Some(format!(
+                        "court list was read to the end at {}; next full crawl due {}. \
+                         A court missing from the list is looked up by name when a \
+                         record needs it.",
+                        at.format("%Y-%m-%d %H:%M UTC"),
+                        due.format("%Y-%m-%d %H:%M UTC")
+                    )),
+                    ..Default::default()
+                });
+            }
+        };
 
         let mut courts = Vec::new();
         let mut next = None;
+        let mut paused = None;
         for page in 0..self.pages {
             if page > 0 {
                 polite_pause().await;
             }
-            let body = get_json(&self.client, &url, None).await?;
+            let body = match get_json(&self.client, &url, None).await {
+                Ok(body) => body,
+                // Pages already read are real records about real courts. The
+                // first page failing means the poll learned nothing, which is
+                // a failure; a later page failing means stop here and say
+                // where to pick up.
+                Err(e) if page == 0 => return Err(e),
+                Err(e) => {
+                    paused = Some(format!(
+                        "stopped after {page} page(s) of the court list: {e}. \
+                         The courts read so far are stored; the next poll resumes here."
+                    ));
+                    next = Some(url);
+                    break;
+                }
+            };
             let results = body
                 .get("results")
                 .and_then(Value::as_array)
@@ -287,9 +369,23 @@ impl Source for CourtRegistry {
             }
         }
 
+        // Ran out of budgeted pages with the list still going: not the end of
+        // the feed, so keep the place and say why.
+        if paused.is_none() && next.is_some() {
+            paused = Some(format!(
+                "read {} page(s) this poll, the per-poll budget; the court list \
+                 continues and the next poll resumes where this one stopped. \
+                 Raise CL_COURTS_PAGES to crawl further per poll.",
+                self.pages
+            ));
+        }
+
         Ok(PollResult {
             courts,
-            next_cursor: next,
+            // Reaching the end is recorded as a completion, not as "nowhere to
+            // resume from", which is what sent the next poll back to page one.
+            next_cursor: next.or_else(|| Some(complete_marker(chrono::Utc::now()))),
+            paused,
             ..Default::default()
         })
     }
@@ -822,6 +918,58 @@ mod tests {
         let r = json!({"docket_number": "1:24-cv-1", "blocked": true});
         assert!(map_docket(r).is_none());
         assert!(map_opinion(&json!({"plain_text": "text", "blocked": true})).is_none());
+    }
+
+    #[test]
+    fn a_crawl_with_no_saved_place_starts_at_the_head() {
+        assert!(matches!(resume(None), Resume::Head));
+        assert!(matches!(resume(Some("  ")), Resume::Head));
+    }
+
+    #[test]
+    fn a_crawl_resumes_on_the_page_it_stopped_on() {
+        let page = "https://www.courtlistener.com/api/rest/v4/courts/?in_use=true&page=23";
+        match resume(Some(page)) {
+            Resume::Page(url) => assert_eq!(url, page),
+            _ => panic!("a saved page is where the next poll belongs"),
+        }
+    }
+
+    #[test]
+    fn a_finished_crawl_is_not_repeated_immediately() {
+        let at = chrono::Utc::now() - chrono::Duration::hours(1);
+        match resume(Some(&complete_marker(at))) {
+            Resume::Complete(recorded) => {
+                assert!((recorded - at).num_seconds().abs() <= 1);
+            }
+            _ => panic!("a list read an hour ago does not need re-reading"),
+        }
+    }
+
+    #[test]
+    fn a_finished_crawl_is_repeated_once_it_is_stale() {
+        let at = chrono::Utc::now() - chrono::Duration::hours(REFRESH_AFTER_HOURS + 1);
+        assert!(matches!(resume(Some(&complete_marker(at))), Resume::Head));
+    }
+
+    /// A marker we cannot read must not be able to stop the refresh forever.
+    #[test]
+    fn an_unreadable_completion_marker_crawls_again() {
+        assert!(matches!(
+            resume(Some("complete:not-a-timestamp")),
+            Resume::Head
+        ));
+        assert!(matches!(resume(Some("complete:")), Resume::Head));
+    }
+
+    #[test]
+    fn a_cursor_for_another_feed_is_not_used_as_a_courts_page() {
+        assert!(matches!(
+            resume(Some(
+                "https://www.courtlistener.com/api/rest/v4/search/?cursor=abc"
+            )),
+            Resume::Head
+        ));
     }
 
     #[test]

@@ -195,6 +195,16 @@ describe("sources and provenance", () => {
 		expect(page).toContain("429 Too Many Requests");
 	});
 
+	it("separates a feed mid-list from a feed in trouble", async () => {
+		// Stopping part-way through a long list and keeping your place is
+		// progress. Reported as a failure, it would understate coverage; reported
+		// as healthy, it would overstate it.
+		const page = await body("/sources");
+		expect(page).toContain("Feeds part-way through a list");
+		expect(page).toContain("the next poll resumes where this one stopped");
+		expect(page).toContain("mid-list");
+	});
+
 	it("names what ingestion refuses to store", async () => {
 		const page = await body("/sources");
 		for (const kind of ["sealed", "juvenile", "expunged"]) {

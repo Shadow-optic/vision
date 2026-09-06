@@ -150,6 +150,23 @@ export const INGEST_SOURCES = {
 				total_skipped: 0,
 			},
 		},
+		// Stopped part-way through a long list, kept its place, and is not failing.
+		{
+			source: "courtlistener-feed/ca9",
+			label: "CourtListener Atom feed: ca9",
+			configured: true,
+			status: {
+				feed_kind: "atom",
+				last_ok_at: "2026-09-06T00:52:00.000000+00:00",
+				last_error: null,
+				last_pause:
+					"read 4 page(s) this poll, the per-poll budget; the court list continues and the next poll resumes where this one stopped.",
+				consecutive_failures: 0,
+				new_cases: 19,
+				new_opinions: 20,
+				total_skipped: 0,
+			},
+		},
 	],
 	exclusions: ["sealed", "juvenile", "expunged", "source-blocked", "empty text"],
 	note: "Ingestion records what a public source published.",

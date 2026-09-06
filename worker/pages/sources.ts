@@ -92,7 +92,13 @@ export async function sources(ctx: Ctx): Promise<Response> {
 									<td class="faint">${st?.last_ok_at ? st.last_ok_at.slice(0, 19).replace("T", " ") : "never"}</td>
 									<td>${st ? `${st.new_cases ?? 0} / ${st.new_opinions ?? 0}` : "—"}</td>
 									<td>${st?.total_skipped ?? 0}</td>
-									<td>${feedState(s.configured, st?.consecutive_failures ?? 0)}</td>
+									<td>
+										${feedState(
+											s.configured,
+											st?.consecutive_failures ?? 0,
+											st?.last_pause ?? null,
+										)}
+									</td>
 								</tr>`;
 							})}
 						</tbody>
@@ -102,6 +108,13 @@ export async function sources(ctx: Ctx): Promise<Response> {
 	const errors = failing
 		.map((s) => ({ label: s.label ?? s.source, detail: s.status?.last_error }))
 		.filter((e) => e.detail);
+
+	// A feed part-way through a long list is not a feed in trouble, and the two
+	// read very differently to someone judging whether coverage can be trusted.
+	const paused = configured
+		.filter((s) => (s.status?.consecutive_failures ?? 0) === 0)
+		.map((s) => ({ label: s.label ?? s.source, detail: s.status?.last_pause }))
+		.filter((s) => s.detail);
 
 	const pipelineSection =
 		pipeline.state === "ok"
@@ -158,6 +171,21 @@ export async function sources(ctx: Ctx): Promise<Response> {
 				</section>`
 			: ""}
 
+		${paused.length > 0
+			? html`<section aria-labelledby="pause-h">
+					<h2 id="pause-h">Feeds part-way through a list</h2>
+					<p class="muted">
+						These feeds stopped before the end of the source's list and kept
+						their place, so the next poll continues rather than starting over.
+						The records already read are stored; the rest have not been read
+						yet.
+					</p>
+					${paused.map((s) =>
+						notice("plain", html`<strong>${s.label}.</strong> ${s.detail}`),
+					)}
+				</section>`
+			: ""}
+
 		<section aria-labelledby="refused-h">
 			<h2 id="refused-h">What ingestion refuses</h2>
 			<p class="muted">
@@ -174,10 +202,13 @@ export async function sources(ctx: Ctx): Promise<Response> {
 	return render(ctx, body);
 }
 
-function feedState(configured: boolean, failures: number) {
+function feedState(configured: boolean, failures: number, pause: string | null) {
 	if (!configured) return badge("not configured");
-	if (failures === 0) return badge("healthy", "substantiated");
-	return badge(`${failures} failure${failures === 1 ? "" : "s"}`, "referred");
+	if (failures > 0) {
+		return badge(`${failures} failure${failures === 1 ? "" : "s"}`, "referred");
+	}
+	if (pause) return badge("mid-list", "partial");
+	return badge("healthy", "substantiated");
 }
 
 /**

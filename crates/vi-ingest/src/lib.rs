@@ -108,6 +108,11 @@ pub struct PollResult {
     /// Records the source offered and the source itself declined to normalize.
     pub skipped: u64,
     pub next_cursor: Option<String>,
+    /// Set when the poll stopped before the end of the feed but kept what it
+    /// read and a cursor to resume from. A long list interrupted by a rate
+    /// limit is progress, not an error, and saying so is the difference
+    /// between a feed that finishes eventually and one that restarts forever.
+    pub paused: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize)]
@@ -125,6 +130,8 @@ pub struct RunReport {
     pub opinions_new: u64,
     pub skipped: u64,
     pub next_cursor: Option<String>,
+    /// Why the poll stopped short of the end of the feed, if it did.
+    pub paused: Option<String>,
 }
 
 pub trait Source {
@@ -400,11 +407,16 @@ struct Counts {
     skipped: i32,
 }
 
+/// Record a poll that kept what it read. `paused` carries the reason the poll
+/// stopped short of the end of the feed, and only a poll that reached the end
+/// advances `last_ok_at` — otherwise a crawl stalled on page 23 forever would
+/// report a fresh clean pass every cycle.
 async fn save_success(
     pool: &PgPool,
     source: &str,
     next: Option<&str>,
     counts: Counts,
+    paused: Option<&str>,
 ) -> Result<()> {
     // Running totals count new records only; a feed polled hourly forever
     // would otherwise report a number that grows without anything happening.
@@ -412,8 +424,9 @@ async fn save_success(
         "UPDATE ingest_cursors SET
             next_url = $2,
             last_polled_at = now(),
-            last_ok_at = now(),
+            last_ok_at = CASE WHEN $8::text IS NULL THEN now() ELSE last_ok_at END,
             last_error = NULL,
+            last_pause = $8,
             consecutive_failures = 0,
             last_count = $3 + $4,
             last_cases = $3,
@@ -431,6 +444,7 @@ async fn save_success(
     .bind(counts.cases_new)
     .bind(counts.opinions_new)
     .bind(counts.skipped)
+    .bind(paused)
     .execute(pool)
     .await?;
     Ok(())
@@ -441,6 +455,7 @@ async fn save_failure(pool: &PgPool, source: &str, error: &str) -> Result<()> {
         "UPDATE ingest_cursors SET
             last_polled_at = now(),
             last_error = $2,
+            last_pause = NULL,
             consecutive_failures = consecutive_failures + 1,
             last_count = 0, last_cases = 0, last_opinions = 0, last_skipped = 0
           WHERE source = $1",
@@ -463,7 +478,7 @@ pub async fn list_cursors(pool: &PgPool) -> Result<Vec<Value>> {
              'new_cases', total_cases, 'new_opinions', total_opinions,
              'total_skipped', total_skipped,
              'consecutive_failures', consecutive_failures,
-             'last_error', last_error)
+             'last_error', last_error, 'last_pause', last_pause)
            FROM ingest_cursors ORDER BY source"#,
     )
     .fetch_all(pool)
@@ -633,6 +648,7 @@ pub async fn execute(
             opinions_new: opinions_new as i32,
             skipped: skipped as i32,
         },
+        poll.paused.as_deref(),
     )
     .await?;
 
@@ -647,6 +663,7 @@ pub async fn execute(
         opinions_new,
         skipped,
         next_cursor: poll.next_cursor,
+        paused: poll.paused,
     })
 }
 
@@ -694,6 +711,9 @@ pub async fn run_specs(
                     skipped = report.skipped,
                     "feed polled"
                 );
+                if let Some(why) = &report.paused {
+                    tracing::info!(source = %report.source, reason = %why, "feed stopped short");
+                }
                 reports.push(report);
             }
             Err(e) => {

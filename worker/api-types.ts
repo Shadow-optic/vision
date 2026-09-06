@@ -111,6 +111,11 @@ export interface IngestCursorStatus {
 	last_ok_at?: string | null;
 	last_polled_at?: string | null;
 	last_error?: string | null;
+	/**
+	 * Why the last poll stopped before the end of the feed, having kept what it
+	 * read. A long list interrupted by a rate limit is progress, not a failure.
+	 */
+	last_pause?: string | null;
 	consecutive_failures?: number;
 	new_cases?: number;
 	new_opinions?: number;
