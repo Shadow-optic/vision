@@ -15,6 +15,7 @@ import {
 	SEARCH,
 	SEARCH_FULL_CORPUS,
 	TRACKER,
+	TRANSPARENCY_SNAPSHOTS,
 	WALL,
 	WALL_PROFILE,
 } from "./fixtures.ts";
@@ -42,6 +43,8 @@ export function handleBackendRequest(request: Request): Response {
 			return json(ENGINES);
 		case "/ledger/verify":
 			return json(LEDGER);
+		case "/transparency/snapshots":
+			return json(TRANSPARENCY_SNAPSHOTS);
 		case "/reckoning/wall":
 			return json(WALL);
 		case "/reckoning/tracker":
