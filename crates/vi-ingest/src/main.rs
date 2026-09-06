@@ -6,11 +6,12 @@
 //! deployment is reading from is never a mystery:
 //!
 //! ```text
-//! INGEST_SOURCES        comma-separated feed names, or `all` (default: all)
+//! INGEST_SOURCES        comma-separated feed names, or `all` (the default)
 //! CL_SEARCH_QUERIES     semicolon-separated search queries
 //! CL_FEED_COURTS        comma-separated court ids for Atom feeds
 //! CL_API_TOKEN          enables the authenticated feed with complete text
-//! CL_COURTS_PAGES       registry pages per cycle
+//! CL_COURTS_PAGES       registry pages per cycle; a crawl that runs out
+//!                       resumes where it stopped on the next cycle
 //! INGEST_BACKFILL       follow cursors backwards instead of re-reading the head
 //! INGEST_INTERVAL_SECS  loop interval; unset means a single cycle
 //! INGEST_PIPELINE       set to 0 to ingest without running the engines
@@ -58,6 +59,17 @@ async fn main() -> Result<()> {
         interval_secs = ?interval,
         "ingestion starting"
     );
+
+    // Publish the feed list from the process that polls it. The API serves the
+    // sources page and may be configured separately, so left to its own
+    // environment it reports live feeds as switched off.
+    //
+    // Only the scheduler declares. A single cycle is an operator running one
+    // feed by hand, and letting that redefine what the deployment reads would
+    // leave the sources page describing a one-off command as the whole system.
+    if interval.is_some() {
+        vi_ingest::declare_configured(&pool, &specs).await?;
+    }
 
     let mut cycle = 0u64;
     loop {

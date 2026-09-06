@@ -116,6 +116,12 @@ export interface IngestCursorStatus {
 	 * read. A long list interrupted by a rate limit is progress, not a failure.
 	 */
 	last_pause?: string | null;
+	/**
+	 * Where the next poll resumes. A `complete:<timestamp>` value means the
+	 * feed's list was read to the end and is waiting to be refreshed, which is
+	 * a finished feed rather than an interrupted one.
+	 */
+	next_url?: string | null;
 	consecutive_failures?: number;
 	new_cases?: number;
 	new_opinions?: number;

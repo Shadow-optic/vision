@@ -110,6 +110,7 @@ INGEST_INTERVAL_SECS=900 ./vi-ingest
 | `CL_SEARCH_QUERIES` | semicolon-separated search queries |
 | `CL_FEED_COURTS` | court ids for the per-court Atom feeds |
 | `CL_API_TOKEN` | optional; the only way to get complete opinion text |
+| `CL_COURTS_PAGES` | registry pages per cycle; a crawl resumes where it stopped |
 | `INGEST_INTERVAL_SECS` | unset runs one cycle; set to loop |
 | `INGEST_PIPELINE` | `0` ingests without running the engines |
 | `INGEST_COURT_LOOKUP` | `0` never fetches a court the registry lacks |
@@ -125,6 +126,13 @@ Feeds are idempotent: re-polling the same head stores nothing new. Every feed's
 last success, last error, and new-record counts are published at `/sources`,
 and a failing feed is shown rather than hidden — a gap in coverage the public
 cannot see looks like an absence of misconduct.
+
+A feed reading a long list — the court registry is the one that does — may run
+out of its per-cycle page budget before the end. It keeps the records it read
+and the page to resume on, so the next cycle continues rather than starting
+over, and `/sources` shows it as mid-list rather than as healthy or failing.
+Once the list is read to the end it is left alone for 24 hours; a court missing
+from it is fetched by name when a record needs placing.
 
 ## 5. Custom domain
 

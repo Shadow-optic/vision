@@ -161,8 +161,27 @@ export const INGEST_SOURCES = {
 				last_error: null,
 				last_pause:
 					"read 4 page(s) this poll, the per-poll budget; the court list continues and the next poll resumes where this one stopped.",
+				next_url: "https://www.courtlistener.com/api/rest/v4/courts/?page=5",
 				consecutive_failures: 0,
 				new_cases: 19,
+				new_opinions: 20,
+				total_skipped: 0,
+			},
+		},
+		// Read to the end and waiting to be refreshed: finished, not interrupted.
+		{
+			source: "courtlistener-feed/scotus",
+			label: "CourtListener Atom feed: scotus",
+			configured: true,
+			status: {
+				feed_kind: "atom",
+				last_ok_at: "2026-09-06T01:50:59.107034+00:00",
+				last_error: null,
+				last_pause:
+					"court list was read to the end at 2026-09-06 01:50 UTC; next full crawl due 2026-09-07 01:50 UTC.",
+				next_url: "complete:2026-09-06T01:50:58.631716127+00:00",
+				consecutive_failures: 0,
+				new_cases: 20,
 				new_opinions: 20,
 				total_skipped: 0,
 			},

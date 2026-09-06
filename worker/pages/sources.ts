@@ -7,7 +7,11 @@
  * how many records ingestion declined to store at all.
  */
 import type { Ctx } from "../context";
-import type { IngestSourcesResponse, PipelineStatusResponse } from "../api-types";
+import type {
+	IngestCursorStatus,
+	IngestSourcesResponse,
+	PipelineStatusResponse,
+} from "../api-types";
 import { getJson } from "../upstream";
 import { htmlResponse } from "../http";
 import { page } from "../view/layout";
@@ -92,13 +96,7 @@ export async function sources(ctx: Ctx): Promise<Response> {
 									<td class="faint">${st?.last_ok_at ? st.last_ok_at.slice(0, 19).replace("T", " ") : "never"}</td>
 									<td>${st ? `${st.new_cases ?? 0} / ${st.new_opinions ?? 0}` : "—"}</td>
 									<td>${st?.total_skipped ?? 0}</td>
-									<td>
-										${feedState(
-											s.configured,
-											st?.consecutive_failures ?? 0,
-											st?.last_pause ?? null,
-										)}
-									</td>
+									<td>${feedState(s.configured, st)}</td>
 								</tr>`;
 							})}
 						</tbody>
@@ -109,9 +107,10 @@ export async function sources(ctx: Ctx): Promise<Response> {
 		.map((s) => ({ label: s.label ?? s.source, detail: s.status?.last_error }))
 		.filter((e) => e.detail);
 
-	// A feed part-way through a long list is not a feed in trouble, and the two
-	// read very differently to someone judging whether coverage can be trusted.
-	const paused = configured
+	// A feed that read less than the whole list is not a feed in trouble, and
+	// the two read very differently to someone judging whether coverage can be
+	// trusted. Nor is a finished list the same as an interrupted one.
+	const partial = configured
 		.filter((s) => (s.status?.consecutive_failures ?? 0) === 0)
 		.map((s) => ({ label: s.label ?? s.source, detail: s.status?.last_pause }))
 		.filter((s) => s.detail);
@@ -171,16 +170,16 @@ export async function sources(ctx: Ctx): Promise<Response> {
 				</section>`
 			: ""}
 
-		${paused.length > 0
+		${partial.length > 0
 			? html`<section aria-labelledby="pause-h">
-					<h2 id="pause-h">Feeds part-way through a list</h2>
+					<h2 id="pause-h">Why a feed read less than the whole list</h2>
 					<p class="muted">
-						These feeds stopped before the end of the source's list and kept
-						their place, so the next poll continues rather than starting over.
-						The records already read are stored; the rest have not been read
-						yet.
+						A feed reading a long list keeps its place, so a poll that stops
+						early continues on the next one rather than starting over, and a
+						list already read to the end is left alone until it is due again.
+						Neither is a failure, and neither is a complete pass this cycle.
 					</p>
-					${paused.map((s) =>
+					${partial.map((s) =>
 						notice("plain", html`<strong>${s.label}.</strong> ${s.detail}`),
 					)}
 				</section>`
@@ -202,13 +201,25 @@ export async function sources(ctx: Ctx): Promise<Response> {
 	return render(ctx, body);
 }
 
-function feedState(configured: boolean, failures: number, pause: string | null) {
+/**
+ * Three states worth telling apart: a feed that is down, a feed part-way
+ * through a list it will resume, and a feed whose list is read to the end and
+ * waiting to be refreshed. The last of those is healthy.
+ */
+function feedState(configured: boolean, st?: IngestCursorStatus | null) {
 	if (!configured) return badge("not configured");
+	const failures = st?.consecutive_failures ?? 0;
 	if (failures > 0) {
 		return badge(`${failures} failure${failures === 1 ? "" : "s"}`, "referred");
 	}
-	if (pause) return badge("mid-list", "partial");
+	if (listComplete(st)) return badge("list complete", "substantiated");
+	if (st?.last_pause) return badge("mid-list", "partial");
 	return badge("healthy", "substantiated");
+}
+
+/** The feed's list was crawled to the end; the cursor records when. */
+function listComplete(st?: IngestCursorStatus | null): boolean {
+	return (st?.next_url ?? "").startsWith("complete:");
 }
 
 /**

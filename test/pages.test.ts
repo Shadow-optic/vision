@@ -200,9 +200,15 @@ describe("sources and provenance", () => {
 		// progress. Reported as a failure, it would understate coverage; reported
 		// as healthy, it would overstate it.
 		const page = await body("/sources");
-		expect(page).toContain("Feeds part-way through a list");
+		expect(page).toContain("Why a feed read less than the whole list");
 		expect(page).toContain("the next poll resumes where this one stopped");
 		expect(page).toContain("mid-list");
+	});
+
+	it("calls a list read to the end complete, not interrupted", async () => {
+		const page = await body("/sources");
+		expect(page).toContain("list complete");
+		expect(page).toContain("next full crawl due");
 	});
 
 	it("names what ingestion refuses to store", async () => {

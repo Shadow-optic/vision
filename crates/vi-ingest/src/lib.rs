@@ -520,11 +520,44 @@ async fn save_failure(pool: &PgPool, source: &str, error: &str) -> Result<()> {
     Ok(())
 }
 
+/// Record the feeds this service polls, so that anything reporting on coverage
+/// reads the list from the process doing the polling.
+///
+/// The API answered from its own environment, and when the two services were
+/// configured separately it published a live feed as "not configured" — a
+/// coverage gap that did not exist, over records that did.
+pub async fn declare_configured(pool: &PgPool, specs: &[FeedSpec]) -> Result<()> {
+    let names: Vec<String> = specs.iter().map(FeedSpec::name).collect();
+    for spec in specs {
+        let feed = spec.build();
+        sqlx::query(
+            "INSERT INTO ingest_cursors (source, feed_kind, label, configured)
+             VALUES ($1,$2,$3,TRUE)
+             ON CONFLICT (source) DO UPDATE SET
+                configured = TRUE,
+                feed_kind = COALESCE(EXCLUDED.feed_kind, ingest_cursors.feed_kind),
+                label = COALESCE(EXCLUDED.label, ingest_cursors.label)",
+        )
+        .bind(spec.name())
+        .bind(feed.as_ref().ok().map(|f| f.kind()))
+        .bind(feed.as_ref().ok().map(|f| f.label()))
+        .execute(pool)
+        .await?;
+    }
+    // A feed dropped from the configuration keeps its history and stops
+    // claiming to be read.
+    sqlx::query("UPDATE ingest_cursors SET configured = FALSE WHERE source <> ALL($1)")
+        .bind(&names)
+        .execute(pool)
+        .await?;
+    Ok(())
+}
+
 pub async fn list_cursors(pool: &PgPool) -> Result<Vec<Value>> {
     let rows = sqlx::query_scalar::<_, Value>(
         r#"SELECT jsonb_build_object(
              'source', source, 'feed_kind', feed_kind, 'label', label,
-             'next_url', next_url,
+             'next_url', next_url, 'configured', configured,
              'last_polled_at', last_polled_at, 'last_ok_at', last_ok_at,
              'last_count', last_count, 'last_cases', last_cases,
              'last_opinions', last_opinions, 'last_skipped', last_skipped,
@@ -539,13 +572,24 @@ pub async fn list_cursors(pool: &PgPool) -> Result<Vec<Value>> {
     Ok(rows)
 }
 
-/// Configured feeds joined with what the database knows about each one, so a
-/// feed that is configured but has never polled is visible as exactly that.
+/// Every feed with what the database knows about it, so a feed that is
+/// configured but has never polled is visible as exactly that.
+///
+/// Whether a feed is polled comes from the ingestion service's own declaration
+/// where it has made one. This process's environment is only a fallback: the
+/// API and the ingestion service can be configured separately, and answering
+/// from the wrong one published live feeds as switched off.
 pub async fn list_sources(pool: &PgPool) -> Result<Value> {
-    let configured = configured_from_env();
+    let local = configured_from_env();
     let rows = list_cursors(pool).await?;
+    let declared = |name: &str| -> Option<bool> {
+        rows.iter()
+            .find(|r| r.get("source").and_then(Value::as_str) == Some(name))
+            .and_then(|r| r.get("configured").and_then(Value::as_bool))
+    };
+
     let mut sources = Vec::new();
-    for spec in &configured {
+    for spec in &local {
         let name = spec.name();
         let status = rows
             .iter()
@@ -558,20 +602,21 @@ pub async fn list_sources(pool: &PgPool) -> Result<Value> {
         sources.push(json!({
             "source": name,
             "label": label,
-            "configured": true,
+            "configured": declared(&name).unwrap_or(true),
             "status": status,
         }));
     }
-    // Feeds that ran under a previous configuration still have history.
+    // Feeds the poller reads that this process was not told about, and feeds
+    // that ran under a previous configuration and still have history.
     for row in &rows {
         let name = row.get("source").and_then(Value::as_str).unwrap_or("");
-        if configured.iter().any(|s| s.name() == name) {
+        if local.iter().any(|s| s.name() == name) {
             continue;
         }
         sources.push(json!({
             "source": name,
             "label": row.get("label").cloned().unwrap_or(Value::Null),
-            "configured": false,
+            "configured": declared(name).unwrap_or(false),
             "status": row.clone(),
         }));
     }
