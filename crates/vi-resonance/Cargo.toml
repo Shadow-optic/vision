@@ -1,0 +1,17 @@
+[package]
+name = "vi-resonance"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+uuid = { workspace = true }
+vi-geo = { path = "../vi-geo" }
+vi-ledger = { path = "../vi-ledger" }
+
+[dev-dependencies]
+tokio = { workspace = true }
