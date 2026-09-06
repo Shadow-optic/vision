@@ -765,16 +765,8 @@ pub async fn execute(
     })
 }
 
-/// Run one feed name, a family of feeds, `all`, or `configured`.
-///
-/// `configured` is this deployment's own `INGEST_SOURCES` list, resolved here
-/// rather than in [`expand`] so that a feed name can never resolve through the
-/// configuration that named it.
-pub async fn run_named(
-    pool: &PgPool,
-    ledger: &vi_ledger::Ledger,
-    source: &str,
-) -> Result<Vec<RunReport>> {
+/// Resolve a feed name the same way [`run_named`] and [`run_cycle`] do.
+pub fn specs_for(source: &str) -> Result<Vec<FeedSpec>> {
     let source = source.trim();
     let specs = if source == "configured" {
         configured_from_env()
@@ -787,7 +779,166 @@ pub async fn run_named(
              courtlistener-search[/query], courtlistener-feed[/court], all, or configured)"
         );
     }
+    Ok(specs)
+}
+
+/// Run one feed name, a family of feeds, `all`, or `configured`.
+///
+/// `configured` is this deployment's own `INGEST_SOURCES` list, resolved here
+/// rather than in [`expand`] so that a feed name can never resolve through the
+/// configuration that named it.
+pub async fn run_named(
+    pool: &PgPool,
+    ledger: &vi_ledger::Ledger,
+    source: &str,
+) -> Result<Vec<RunReport>> {
+    let specs = specs_for(source)?;
     run_specs(pool, ledger, &specs).await
+}
+
+/// One live-ingestion cycle: poll feeds, place unplaced courts, run engines.
+///
+/// This is the same sequence the `vi-ingest` scheduler runs. The HTTP API
+/// exposes it so an operator can start live ingestion without a separate
+/// process, and so a one-off request and the scheduler cannot drift.
+#[derive(Debug, Clone)]
+pub struct CycleRequest {
+    pub source: String,
+    pub place_courts: bool,
+    pub pipeline: bool,
+    pub pipeline_limit: i64,
+    /// Publish this request's feed list as what the deployment reads.
+    /// The scheduler does this on startup; a one-off fixture run must not.
+    pub declare: bool,
+    pub trigger: String,
+}
+
+impl CycleRequest {
+    /// Defaults that start live ingestion from this process's environment.
+    pub fn live() -> Self {
+        Self {
+            source: "configured".into(),
+            place_courts: true,
+            pipeline: std::env::var("INGEST_PIPELINE").unwrap_or_default().trim() != "0",
+            pipeline_limit: env_nonempty("INGEST_PIPELINE_LIMIT")
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(200),
+            declare: true,
+            trigger: "ingest".into(),
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CycleTotals {
+    pub cases: u64,
+    pub opinions: u64,
+    pub courts: u64,
+    pub skipped: u64,
+    pub cases_new: u64,
+    pub opinions_new: u64,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CyclePipeline {
+    pub cases_processed: usize,
+    pub ok: usize,
+    pub partial: usize,
+    pub failed: usize,
+    pub screens: usize,
+    pub flags_fired: i64,
+    pub evidence_gaps: i64,
+    pub actors_linked: i64,
+}
+
+impl From<&vi_pipeline::RunSummary> for CyclePipeline {
+    fn from(s: &vi_pipeline::RunSummary) -> Self {
+        Self {
+            cases_processed: s.cases_processed,
+            ok: s.ok,
+            partial: s.partial,
+            failed: s.failed,
+            screens: s.screens,
+            flags_fired: s.flags_fired,
+            evidence_gaps: s.evidence_gaps,
+            actors_linked: s.actors_linked,
+        }
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct CycleReport {
+    pub source: String,
+    pub feeds: Vec<RunReport>,
+    /// Set when every feed failed. Placement and the pipeline still run —
+    /// already-ingested records must not wait on a downed court.
+    pub feed_error: Option<String>,
+    pub totals: CycleTotals,
+    pub courts: Option<Value>,
+    pub pipeline: Option<CyclePipeline>,
+}
+
+/// Poll, place, and walk new records through the engines — one cycle.
+pub async fn run_cycle(
+    pool: &PgPool,
+    ledger: &vi_ledger::Ledger,
+    req: &CycleRequest,
+) -> Result<CycleReport> {
+    let specs = specs_for(&req.source)?;
+    if req.declare {
+        declare_configured(pool, &specs).await?;
+    }
+
+    let mut feed_error = None;
+    let feeds = match run_specs(pool, ledger, &specs).await {
+        Ok(reports) => reports,
+        Err(e) => {
+            tracing::error!(source = %req.source, error = %e, "every feed failed this cycle");
+            feed_error = Some(e.to_string());
+            Vec::new()
+        }
+    };
+
+    let courts = if req.place_courts {
+        match backfill_unplaced_courts(pool).await {
+            Ok(report) => Some(report),
+            Err(e) => {
+                tracing::warn!(error = %e, "court placement failed");
+                Some(json!({ "error": e.to_string() }))
+            }
+        }
+    } else {
+        None
+    };
+
+    let pipeline = if req.pipeline {
+        let limit = req.pipeline_limit.clamp(1, 2000);
+        match vi_pipeline::run_pending(pool, ledger, limit, &req.trigger).await {
+            Ok(summary) => Some(CyclePipeline::from(&summary)),
+            Err(e) => {
+                tracing::error!(error = %e, "pipeline cycle failed");
+                return Err(e.into());
+            }
+        }
+    } else {
+        None
+    };
+
+    Ok(CycleReport {
+        source: req.source.clone(),
+        totals: CycleTotals {
+            cases: feeds.iter().map(|r| r.cases_persisted).sum(),
+            opinions: feeds.iter().map(|r| r.opinions_persisted).sum(),
+            courts: feeds.iter().map(|r| r.courts_persisted).sum(),
+            skipped: feeds.iter().map(|r| r.skipped).sum(),
+            cases_new: feeds.iter().map(|r| r.cases_new).sum(),
+            opinions_new: feeds.iter().map(|r| r.opinions_new).sum(),
+        },
+        feeds,
+        feed_error,
+        courts,
+        pipeline,
+    })
 }
 
 /// Run several feeds in order, reporting per feed. One failing feed does not
@@ -1417,5 +1568,24 @@ mod tests {
             .filter(|s| matches!(s, FeedSpec::Courts { .. }))
             .count();
         assert_eq!(courts, 1);
+    }
+
+    #[test]
+    fn specs_for_rejects_unknown_names() {
+        let err = specs_for("pacer").unwrap_err().to_string();
+        assert!(err.contains("unknown ingest source"));
+        assert_eq!(specs_for("fixture").unwrap(), vec![FeedSpec::Fixture]);
+        assert!(!specs_for("configured").unwrap().is_empty());
+    }
+
+    #[test]
+    fn a_live_cycle_defaults_to_the_configured_feeds_and_the_engines() {
+        let req = CycleRequest::live();
+        assert_eq!(req.source, "configured");
+        assert!(req.place_courts);
+        assert!(req.pipeline);
+        assert_eq!(req.pipeline_limit, 200);
+        assert!(req.declare);
+        assert_eq!(req.trigger, "ingest");
     }
 }

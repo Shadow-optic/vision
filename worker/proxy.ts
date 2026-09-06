@@ -178,6 +178,11 @@ export const WITHHELD: { path: string; reason: string }[] = [
 			"Quotes the raw judge field of an identifiable case while the platform has declined to say which individuals it names. The open count appears on /sources instead.",
 	},
 	{
+		path: "/ingest/cycle, /ingest/run, /ingest/place-courts",
+		reason:
+			"Starting ingestion, placing courts, and walking records through the engines are counsel operations. The public site publishes feed state at /ingest/sources; it never starts a poll.",
+	},
+	{
 		path: "All POST routes",
 		reason:
 			"Publication and holds, package generation, rule runs, entity resolution, and ingestion are counsel operations. They exist only on the backend.",

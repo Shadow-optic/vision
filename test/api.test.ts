@@ -31,6 +31,10 @@ describe("public JSON mirror", () => {
 			// Quotes an identifiable case's raw judge field while the platform has
 			// declined to say which individuals it names.
 			"/pipeline/unresolved-officials",
+			// Starting a poll is a counsel write, even if someone GETs the path.
+			"/ingest/cycle",
+			"/ingest/run",
+			"/ingest/place-courts",
 		]) {
 			const res = await api(path);
 			expect(res.status, path).toBe(404);

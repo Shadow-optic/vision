@@ -104,6 +104,22 @@ INGEST_SOURCES=courtlistener-courts,courtlistener-search,courtlistener-feed \
 INGEST_INTERVAL_SECS=900 ./vi-ingest
 ```
 
+The same cycle is also the backend HTTP API, so an operator can start live
+ingestion without a second process. `POST /ingest/cycle` polls the configured
+feeds, places any court the poll could not resolve, then walks new records
+through the engines. `POST /ingest/run` with `cycle: true` is the same path.
+
+```bash
+curl -s -X POST https://<api>/ingest/cycle \
+  -H 'content-type: application/json' \
+  -d '{"source":"configured"}'
+curl -s https://<api>/ingest/sources | jq '.sources | length'
+curl -s https://<api>/pipeline/status | jq '.cases'
+```
+
+These write routes stay on the counsel-facing backend. The public Worker
+answers `405` to every `POST` and does not allowlist `/ingest/cycle`.
+
 | Variable | Effect |
 |---|---|
 | `INGEST_SOURCES` | feeds to poll, or `all`. See [`.env.example`](.env.example) |

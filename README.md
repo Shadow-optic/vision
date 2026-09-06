@@ -78,6 +78,15 @@ curl -s -X POST localhost:8080/simulate/from-case/22222222-2222-2222-2222-222222
 curl -s -X POST localhost:8080/ingest/run -H 'content-type: application/json' \
   -d '{"source":"fixture"}'
 curl -s localhost:8080/ingest/status
+curl -s localhost:8080/ingest/sources
+
+# Start one live-ingestion cycle: poll configured feeds, place unplaced
+# courts, then walk new records through every engine (pending artifacts only).
+curl -s -X POST localhost:8080/ingest/cycle -H 'content-type: application/json' \
+  -d '{"source":"configured"}'
+# Same path through the poll endpoint:
+curl -s -X POST localhost:8080/ingest/run -H 'content-type: application/json' \
+  -d '{"source":"configured","cycle":true}'
 
 # H3
 curl -s localhost:8080/geo/kring/8828308281fffff?k=1
@@ -176,6 +185,8 @@ off as an opinion. See [DEPLOYMENT.md](DEPLOYMENT.md#4-start-live-ingestion).
 - `GET /health` — liveness
 - `GET /ready` — database ping
 - `GET /engines` — engine catalog + live row counts
+- `POST /ingest/cycle` — one live-ingestion cycle (feeds, court placement, engines)
+- `GET /ingest/sources` — configured feeds, last success or failure, refused records
 - `BIND_ADDR` (default `0.0.0.0:8080`), `DATABASE_URL`, `DATABASE_MAX_CONNECTIONS`
 - Graceful shutdown on SIGINT/SIGTERM
 - Request tracing, 60s timeouts, permissive CORS (replace with an allow-list behind your gateway)
