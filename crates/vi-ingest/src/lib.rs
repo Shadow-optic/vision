@@ -278,23 +278,70 @@ pub const DEFAULT_FEED_COURTS: &[&str] = &["ca9", "scotus"];
 /// Search queries come from `CL_SEARCH_QUERIES` (semicolon-separated, since
 /// queries contain commas), courts for Atom feeds from `CL_FEED_COURTS`.
 pub fn configured_from_env() -> Vec<FeedSpec> {
-    let has_token = env_nonempty("CL_API_TOKEN").is_some();
-    let requested = env_nonempty("INGEST_SOURCES")
-        .or_else(|| env_nonempty("INGEST_SOURCE"))
-        .unwrap_or_else(|| {
-            if has_token {
-                "courtlistener-courts,courtlistener,courtlistener-search".into()
-            } else {
-                "courtlistener-courts,courtlistener-search,courtlistener-feed".into()
-            }
-        });
+    sources_from(
+        env_nonempty("INGEST_SOURCES")
+            .or_else(|| env_nonempty("INGEST_SOURCE"))
+            .as_deref(),
+    )
+}
 
+/// Resolve a requested feed list, or the defaults when nothing was requested.
+/// Takes the value rather than reading it so that `INGEST_SOURCES=all` can be
+/// exercised without a deployment to set it in.
+fn sources_from(requested: Option<&str>) -> Vec<FeedSpec> {
+    match requested {
+        Some(requested) => expand_list(requested),
+        None => expand_defaults(),
+    }
+}
+
+/// The feeds read when a deployment has not named any. The authenticated feed
+/// is included only when there is a token for it, since polling it without one
+/// yields nothing but refusals.
+fn default_source_tokens() -> &'static [&'static str] {
+    if env_nonempty("CL_API_TOKEN").is_some() {
+        &[
+            "courtlistener-courts",
+            "courtlistener",
+            "courtlistener-search",
+        ]
+    } else {
+        &[
+            "courtlistener-courts",
+            "courtlistener-search",
+            "courtlistener-feed",
+        ]
+    }
+}
+
+/// Expand the default feeds. Kept separate from [`configured_from_env`] so
+/// that `all` resolves to the default *tokens* rather than to whatever
+/// `INGEST_SOURCES` says — which, when it said `all`, was itself.
+fn expand_defaults() -> Vec<FeedSpec> {
+    let mut specs = Vec::new();
+    for token in default_source_tokens() {
+        specs.extend(expand(token));
+    }
+    dedup(specs)
+}
+
+/// Expand a comma-separated list of feed names.
+fn expand_list(requested: &str) -> Vec<FeedSpec> {
     let mut specs = Vec::new();
     for token in requested.split(',') {
         specs.extend(expand(token.trim()));
     }
-    specs.dedup();
+    dedup(specs)
+}
+
+/// One entry per feed. `Vec::dedup` drops only neighbours, which left
+/// `all,courtlistener-courts` polling the court list twice a cycle.
+fn dedup(specs: Vec<FeedSpec>) -> Vec<FeedSpec> {
+    let mut seen = std::collections::HashSet::new();
     specs
+        .into_iter()
+        .filter(|s| seen.insert(s.name()))
+        .collect()
 }
 
 fn search_queries() -> Vec<String> {
@@ -332,11 +379,17 @@ fn courts_pages() -> usize {
 
 /// Expand one feed name into concrete specs. Unknown names expand to nothing;
 /// [`run_named`] reports them as errors rather than silently doing nothing.
+///
+/// No token here resolves through `INGEST_SOURCES`. `all` once meant "whatever
+/// that variable says", so setting it to `all` — the value the documentation
+/// suggests — asked the variable what it meant and crashed the service on a
+/// stack overflow before it read a single record. `configured` is resolved by
+/// [`run_named`] instead, where the request comes from outside the config.
 pub fn expand(token: &str) -> Vec<FeedSpec> {
     let backfill = env_flag("INGEST_BACKFILL");
     match token {
         "" => vec![],
-        "all" | "configured" => configured_from_env(),
+        "all" => expand_defaults(),
         "fixture" => vec![FeedSpec::Fixture],
         "courts" | "courtlistener-courts" => vec![FeedSpec::Courts {
             pages: courts_pages(),
@@ -667,17 +720,26 @@ pub async fn execute(
     })
 }
 
-/// Run one feed name, a family of feeds, or `all`.
+/// Run one feed name, a family of feeds, `all`, or `configured`.
+///
+/// `configured` is this deployment's own `INGEST_SOURCES` list, resolved here
+/// rather than in [`expand`] so that a feed name can never resolve through the
+/// configuration that named it.
 pub async fn run_named(
     pool: &PgPool,
     ledger: &vi_ledger::Ledger,
     source: &str,
 ) -> Result<Vec<RunReport>> {
-    let specs = expand(source.trim());
+    let source = source.trim();
+    let specs = if source == "configured" {
+        configured_from_env()
+    } else {
+        expand(source)
+    };
     if specs.is_empty() {
         bail!(
             "unknown ingest source '{source}' (expected fixture, courts, courtlistener, \
-             courtlistener-search[/query], courtlistener-feed[/court], or all)"
+             courtlistener-search[/query], courtlistener-feed[/court], all, or configured)"
         );
     }
     run_specs(pool, ledger, &specs).await
@@ -1266,5 +1328,49 @@ mod tests {
     #[test]
     fn fixture_expands_to_the_fixture_feed() {
         assert_eq!(expand("fixture"), vec![FeedSpec::Fixture]);
+    }
+
+    /// `all` used to mean "whatever INGEST_SOURCES says", so the documented
+    /// value `INGEST_SOURCES=all` asked the variable what it meant and
+    /// overflowed the stack before reading a record.
+    #[test]
+    fn all_resolves_without_consulting_the_variable_that_may_name_it() {
+        let specs = expand("all");
+        assert!(!specs.is_empty(), "`all` must name real feeds");
+        assert!(specs.iter().any(|s| matches!(s, FeedSpec::Courts { .. })));
+        assert!(specs.iter().any(|s| matches!(s, FeedSpec::Search { .. })));
+    }
+
+    /// The configuration that crashed the service: `INGEST_SOURCES=all`.
+    #[test]
+    fn a_deployment_may_ask_for_all_feeds_by_name() {
+        let specs = sources_from(Some("all"));
+        assert!(!specs.is_empty());
+        assert_eq!(specs, expand_defaults());
+    }
+
+    #[test]
+    fn expansion_is_a_fixed_point() {
+        // Expanding the names of expanded feeds yields the same feeds, so no
+        // token can grow the list a second time around.
+        let specs = expand("all");
+        let names = specs
+            .iter()
+            .map(FeedSpec::name)
+            .collect::<Vec<_>>()
+            .join(",");
+        assert_eq!(expand_list(&names), specs);
+    }
+
+    #[test]
+    fn a_feed_named_twice_is_polled_once() {
+        // `Vec::dedup` drops only neighbours, which left this list polling the
+        // court registry twice every cycle.
+        let specs = expand_list("courtlistener-courts,courtlistener-search,courtlistener-courts");
+        let courts = specs
+            .iter()
+            .filter(|s| matches!(s, FeedSpec::Courts { .. }))
+            .count();
+        assert_eq!(courts, 1);
     }
 }
