@@ -8,7 +8,9 @@ import {
 	ACTOR_ID,
 	ENGINES,
 	HELD_ACTOR_ID,
+	INGEST_SOURCES,
 	LEDGER,
+	PIPELINE_STATUS,
 	SCORE,
 	SEARCH,
 	SEARCH_FULL_CORPUS,
@@ -66,6 +68,10 @@ export function handleBackendRequest(request: Request): Response {
 			return json({ query: url.search, results: [] });
 		case "/ingest/status":
 			return json({ error: "boom" }, 500);
+		case "/ingest/sources":
+			return json(INGEST_SOURCES);
+		case "/pipeline/status":
+			return json(PIPELINE_STATUS);
 		default:
 			return json({ error: "not_found", path }, 404);
 	}

@@ -119,3 +119,46 @@ export const SEARCH_FULL_CORPUS = {
 	corpus: { opinions: 40, full_text: 40, partial_text: 0, median_chars: 24000 },
 	caveat: "Search runs over stored opinion text.",
 };
+
+export const INGEST_SOURCES = {
+	sources: [
+		{
+			source: "courtlistener-search/brady-violation",
+			label: "CourtListener search: \u201cbrady violation\u201d",
+			configured: true,
+			status: {
+				feed_kind: "search",
+				last_ok_at: "2026-09-06T00:54:54.706158+00:00",
+				last_error: null,
+				consecutive_failures: 0,
+				new_cases: 19,
+				new_opinions: 19,
+				total_skipped: 2,
+			},
+		},
+		{
+			source: "courtlistener-courts",
+			label: "CourtListener courts registry",
+			configured: true,
+			status: {
+				feed_kind: "registry",
+				last_ok_at: "2026-09-06T00:54:12.592989+00:00",
+				last_error: "429 Too Many Requests (rate limited)",
+				consecutive_failures: 1,
+				new_cases: 0,
+				new_opinions: 0,
+				total_skipped: 0,
+			},
+		},
+	],
+	exclusions: ["sealed", "juvenile", "expunged", "source-blocked", "empty text"],
+	note: "Ingestion records what a public source published.",
+};
+
+export const PIPELINE_STATUS = {
+	cases: { total: 91, awaiting_pipeline: 0 },
+	stages: ["forum", "constitution_screen", "evidence_leads", "abuse_rules", "actor_links", "score"],
+	totals: { runs: 91, screens: 91, flags_fired: 3, evidence_gaps: 7, actors_linked: 36 },
+	unresolved_officials: { open_ambiguous: 2, open_collective: 1, closed: 0 },
+	note: "Everything the pipeline produces is pending review.",
+};

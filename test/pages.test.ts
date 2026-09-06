@@ -178,6 +178,43 @@ describe("engine, tracker, ledger and search pages", () => {
 	});
 });
 
+describe("sources and provenance", () => {
+	it("publishes every configured feed and its state", async () => {
+		const page = await body("/sources");
+		expect(page).toContain("Where these records come from");
+		expect(page).toContain("brady violation");
+		expect(page).toContain("CourtListener courts registry");
+		expect(page).toContain("healthy");
+	});
+
+	it("publishes a failing feed rather than hiding it", async () => {
+		// A gap in coverage the public cannot see looks like an absence of
+		// misconduct.
+		const page = await body("/sources");
+		expect(page).toContain("Current feed errors");
+		expect(page).toContain("429 Too Many Requests");
+	});
+
+	it("names what ingestion refuses to store", async () => {
+		const page = await body("/sources");
+		for (const kind of ["sealed", "juvenile", "expunged"]) {
+			expect(page).toContain(kind);
+		}
+	});
+
+	it("says the pipeline names nobody", async () => {
+		const page = await body("/sources");
+		expect(page).toContain("constitution_screen");
+		expect(page).toContain("names no one publicly");
+	});
+
+	it("reports names it declined to guess at", async () => {
+		const page = await body("/sources");
+		expect(page).toContain("2 unreadable names");
+		expect(page).toContain("Nobody is named from them");
+	});
+});
+
 describe("platform plumbing", () => {
 	it("reports health as JSON", async () => {
 		const res = await get("/healthz");

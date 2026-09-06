@@ -104,3 +104,47 @@ export interface SearchResponse {
 	corpus?: SearchCorpus;
 	caveat?: string;
 }
+
+export interface IngestCursorStatus {
+	feed_kind?: string | null;
+	label?: string | null;
+	last_ok_at?: string | null;
+	last_polled_at?: string | null;
+	last_error?: string | null;
+	consecutive_failures?: number;
+	new_cases?: number;
+	new_opinions?: number;
+	total_skipped?: number;
+}
+
+export interface IngestSource {
+	source: string;
+	label?: string | null;
+	configured: boolean;
+	status?: IngestCursorStatus | null;
+}
+
+export interface IngestSourcesResponse {
+	sources: IngestSource[];
+	/** Categories never stored, whatever a feed publishes. */
+	exclusions?: string[];
+	note?: string;
+}
+
+export interface PipelineStatusResponse {
+	cases?: { total: number; awaiting_pipeline: number };
+	stages?: string[];
+	totals?: {
+		runs?: number;
+		screens?: number;
+		flags_fired?: number;
+		evidence_gaps?: number;
+		actors_linked?: number;
+	};
+	unresolved_officials?: {
+		open_ambiguous?: number;
+		open_collective?: number;
+		closed?: number;
+	};
+	note?: string;
+}

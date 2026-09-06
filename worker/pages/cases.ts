@@ -142,7 +142,8 @@ export async function cases(ctx: Ctx): Promise<Response> {
 						from public court records — nothing sealed, leaked, or purchased.
 						Where a feed publishes only an extract of an opinion, that is what is
 						stored and it is labelled as such. Search results are not findings; a
-						finding requires counsel review against the underlying document.`,
+						finding requires counsel review against the underlying document.
+						<a href="/sources">Which feeds are read</a>.`,
 				)
 			: ""}
 	`;
