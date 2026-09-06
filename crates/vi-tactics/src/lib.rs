@@ -226,6 +226,117 @@ pub async fn compute_stats(pool: &PgPool, tactic: &Tactic) -> Result<TacticStats
     })
 }
 
+/// Terms that evidence a signal in public text. Matching is literal and
+/// case-insensitive: an occurrence records that the record *mentions* the
+/// doctrine, never that a named person used the tactic. Occurrences are
+/// leads and stay pending until counsel review.
+pub fn signal_terms(signal: &str) -> &'static [&'static str] {
+    match signal {
+        "brady" => &["brady"],
+        "giglio" => &["giglio"],
+        "batson" => &["batson"],
+        "discovery" => &["discovery violation", "late discovery", "sandbagging"],
+        "informant" => &["informant", "cooperating witness"],
+        "trial_penalty" => &["trial penalty", "rejected a plea", "rejected the plea"],
+        // Charge stacking is a structured signal (cardinality of charges),
+        // not a text mention; matched separately.
+        "charge_stack" => &[],
+        _ => &[],
+    }
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct Occurrence {
+    pub occurrence_id: Uuid,
+    pub tactic_id: Uuid,
+    pub signal: Option<String>,
+    pub matched_term: String,
+    pub match_source: &'static str,
+}
+
+/// Match one case's public record against the tactic catalog and record each
+/// hit as a pending occurrence. Idempotent per (case, tactic, term, source).
+///
+/// Returns the number of *new* occurrences inserted. A case with no opinion
+/// text and no charges has nothing to match against; the caller reports that
+/// as skipped, and this function is not invoked.
+pub async fn match_case_occurrences(
+    pool: &PgPool,
+    ledger: &Ledger,
+    case_id: Uuid,
+) -> Result<Vec<Occurrence>, Error> {
+    let texts: Vec<String> = sqlx::query_scalar(
+        "SELECT full_text FROM court_opinions WHERE case_id = $1",
+    )
+    .bind(case_id)
+    .fetch_all(pool)
+    .await?;
+    let haystack = texts.join("\n").to_lowercase();
+
+    let n_charges: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(cardinality(charges), 0)::bigint FROM court_cases WHERE case_id = $1",
+    )
+    .bind(case_id)
+    .fetch_one(pool)
+    .await?;
+
+    let catalog = list(pool, None).await?;
+    let mut inserted = Vec::new();
+    for tactic in &catalog {
+        let Some(signal) = tactic.signal.as_deref() else {
+            continue;
+        };
+        let mut matches: Vec<(&str, &'static str)> = signal_terms(signal)
+            .iter()
+            .filter(|term| haystack.contains(**term))
+            .map(|term| (*term, "opinion_text"))
+            .collect();
+        if signal == "charge_stack" && n_charges > 1 {
+            matches.push(("cardinality(charges) > 1", "charges"));
+        }
+        for (term, source) in matches {
+            let row = sqlx::query_as::<_, (Uuid,)>(
+                "INSERT INTO tactic_occurrences (case_id, tactic_id, matched_term, match_source)
+                 VALUES ($1,$2,$3,$4)
+                 ON CONFLICT (case_id, tactic_id, matched_term, match_source) DO NOTHING
+                 RETURNING occurrence_id",
+            )
+            .bind(case_id)
+            .bind(tactic.tactic_id)
+            .bind(term)
+            .bind(source)
+            .fetch_optional(pool)
+            .await?;
+            if let Some((occurrence_id,)) = row {
+                inserted.push(Occurrence {
+                    occurrence_id,
+                    tactic_id: tactic.tactic_id,
+                    signal: tactic.signal.clone(),
+                    matched_term: term.to_string(),
+                    match_source: source,
+                });
+            }
+        }
+    }
+
+    if !inserted.is_empty() {
+        ledger
+            .append(
+                vi_ledger::events::TACTIC_OCCURRENCE,
+                &json!({
+                    "case_id": case_id,
+                    "occurrences": inserted.len(),
+                    "occurrence_ids": inserted.iter().map(|o| o.occurrence_id).collect::<Vec<_>>(),
+                    "review_status": "pending",
+                    "note": "A mention of a doctrine in public text. An occurrence \
+                             accuses no one and publishes nothing until counsel review.",
+                }),
+            )
+            .await?;
+    }
+    Ok(inserted)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -236,5 +347,17 @@ mod tests {
         assert!(validate_category("espionage").is_err());
         assert!(validate_signal("brady").is_ok());
         assert!(validate_signal("osint").is_err());
+    }
+
+    #[test]
+    fn every_catalog_signal_has_a_match_rule() {
+        for signal in VALID_SIGNALS {
+            if *signal == "charge_stack" {
+                assert!(signal_terms(signal).is_empty());
+            } else {
+                assert!(!signal_terms(signal).is_empty(), "{signal} has no terms");
+            }
+        }
+        assert!(signal_terms("unknown-signal").is_empty());
     }
 }

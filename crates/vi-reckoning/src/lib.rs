@@ -58,6 +58,8 @@ pub enum Error {
     InsufficientEvidence,
     #[error("cannot publish: no counsel-substantiated public-record finding")]
     PublicationBlocked,
+    #[error("illegal package transition: {0}")]
+    InvalidTransition(String),
 }
 
 pub use dashboard::{set_publication, tracker, wall, wall_profile, TrackerRow, WallEntry};
@@ -65,5 +67,5 @@ pub use entity::{
     list, parse_officials, renormalize, resolve, sync_from_public_records, Actor, Officials,
     ResolveHit, ResolveQuery,
 };
-pub use package::{generate, get_package, list_packages, StoredPackage};
+pub use package::{generate, get_package, list_packages, transition, StoredPackage};
 pub use score::{score_actor, AbuseScore};

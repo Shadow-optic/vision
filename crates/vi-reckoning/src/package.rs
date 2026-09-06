@@ -236,6 +236,71 @@ pub async fn generate(
     ))
 }
 
+/// The legal package lifecycle: draft -> attorney_reviewed -> referred.
+/// No skipping (a package cannot be referred before an attorney has reviewed
+/// it) and no regression (a referred package does not become a draft again).
+/// Returns the allowed next state for `from`, or None.
+pub fn next_status(from: &str) -> Option<&'static str> {
+    match from {
+        "draft" => Some("attorney_reviewed"),
+        "attorney_reviewed" => Some("referred"),
+        _ => None,
+    }
+}
+
+/// Move a package along the lifecycle. Each transition is a counsel act and
+/// is ledger-chained; an illegal transition changes nothing and is an error,
+/// not a silent no-op.
+pub async fn transition(
+    pool: &PgPool,
+    ledger: &Ledger,
+    package_id: Uuid,
+    to: &str,
+    notes: Option<&str>,
+) -> Result<StoredPackage, Error> {
+    if !matches!(to, "attorney_reviewed" | "referred") {
+        return Err(Error::InvalidTransition(format!(
+            "unknown target status '{to}'; a package moves to attorney_reviewed or referred"
+        )));
+    }
+
+    let current = get_package(pool, package_id).await?;
+    if next_status(&current.status) != Some(to) {
+        return Err(Error::InvalidTransition(format!(
+            "{} -> {to} (the lifecycle is draft -> attorney_reviewed -> referred, \
+             with no skipping and no regression)",
+            current.status
+        )));
+    }
+
+    let pkg = sqlx::query_as::<_, StoredPackage>(
+        "UPDATE legal_action_packages
+            SET status = $2, reviewed_at = now(), review_notes = $3
+          WHERE package_id = $1
+          RETURNING package_id, actor_id, action_kind, status, body_markdown, document_hash",
+    )
+    .bind(package_id)
+    .bind(to)
+    .bind(notes)
+    .fetch_one(pool)
+    .await?;
+
+    ledger
+        .append(
+            vi_ledger::events::PACKAGE_TRANSITION,
+            &json!({
+                "package_id": package_id,
+                "actor_id": pkg.actor_id,
+                "from": current.status,
+                "to": to,
+                "notes": notes,
+            }),
+        )
+        .await?;
+
+    Ok(pkg)
+}
+
 pub async fn get_package(pool: &PgPool, package_id: Uuid) -> Result<StoredPackage, Error> {
     sqlx::query_as::<_, StoredPackage>(
         "SELECT package_id, actor_id, action_kind, status, body_markdown, document_hash
@@ -273,5 +338,13 @@ mod tests {
     fn kind_validation() {
         assert!(validate_kind("criminal_referral").is_ok());
         assert!(validate_kind("life_for_life").is_err());
+    }
+
+    #[test]
+    fn lifecycle_moves_forward_only() {
+        assert_eq!(next_status("draft"), Some("attorney_reviewed"));
+        assert_eq!(next_status("attorney_reviewed"), Some("referred"));
+        assert_eq!(next_status("referred"), None);
+        assert_eq!(next_status("withdrawn"), None);
     }
 }

@@ -1,7 +1,7 @@
 //! What happens to a record after it is ingested.
 //!
 //! Ingestion stores public records. This crate is the wiring that walks each
-//! new record through every engine that has something to say about it:
+//! new record through the engines that have something to say about it:
 //!
 //! 1. `forum` — is the case in a jurisdiction the corpus knows? Screening a
 //!    case under the wrong body of law is worse than not screening it.
@@ -13,12 +13,43 @@
 //! 5. `actor_links` — the individuals named in the record, resolved to stable
 //!    identities and linked to the case.
 //! 6. `score` — recompute each linked individual's Abuse Score.
+//! 7. `tactics_occurrences` — match the record's text and charge list against
+//!    the tactic catalog, recording occurrences as pending leads.
+//! 8. `trial_penalty` — fold the case's disposition fields into office-level
+//!    distributions when they exist; counted as skipped-no-data when they do
+//!    not (most live feeds carry no disposition data).
+//! 9. `monell_refresh` — recompute and store the Monell fingerprint for the
+//!    case's office, when the case is attributed to one.
+//! 10. `sim_calibration` — refresh the stored office statistics the zero-day
+//!    sim calibrates from, when the case is attributed to an office.
+//! 11. `correlation_refresh` — refresh the office's plea-offer/sentence
+//!    correlation from accumulated records; reported as absent rather than
+//!    filled in when there are too few paired observations.
+//! 12. `drift_ingest_signals` — fold the case's screened opinions into the
+//!    per-(court, clause) outcome-signal series the drift engine detects over.
+//! 13. `drift_detect` — re-run changepoint detection for every (court, clause)
+//!    series this case contributes observations to.
+//! 14. `capture_rebuild` — rebuild the judge x court x outcome edge table so
+//!    the new opinions are part of the capture graph.
+//! 15. `capture_metrics` — recompute concentration metrics against the seeded
+//!    Monte Carlo null (1000 permutations, fixed seed, reproducible).
+//! 16. `resonance_compute` — weak-signal fusion across all engines, LAST, so
+//!    every signal producer above has already run for this case.
+//!
+//! Drift, capture, and resonance artifacts are machine-derived `pending`
+//! leads, exactly like screens and flags. Transparency snapshots stay
+//! on-demand (`POST /transparency/snapshot`), never per-cycle.
+//!
+//! Engines deliberately not in this list: vi-geo (runs at ingest and API
+//! startup, not per pipeline case), vi-sim's Monte Carlo itself (on demand),
+//! vi-lasm (on-demand package assembly), `/reckoning/sync` (an operator
+//! action, not a per-case step), and vi-transparency (on-demand snapshots).
 //!
 //! Every artifact this pipeline creates is pending by construction. Screens,
-//! leads, flags, links, and scores publish nothing and accuse no one: the
-//! Abuse Score counts only counsel-substantiated material, so a case that has
-//! just been ingested moves nobody's score off zero. Publication remains a
-//! separate, human, licensed-counsel act.
+//! leads, flags, occurrences, links, and scores publish nothing and accuse no
+//! one: the Abuse Score counts only counsel-substantiated material, so a case
+//! that has just been ingested moves nobody's score off zero. Publication
+//! remains a separate, human, licensed-counsel act.
 #![forbid(unsafe_code)]
 
 use serde::Serialize;
@@ -34,9 +65,61 @@ pub enum Error {
     Sqlx(#[from] sqlx::Error),
     #[error("ledger: {0}")]
     Ledger(#[from] vi_ledger::Error),
+    #[error("tactics: {0}")]
+    Tactics(#[from] vi_tactics::Error),
+    #[error("trial penalty: {0}")]
+    TrialPenalty(#[from] vi_trial_penalty::Error),
+    #[error("drift: {0}")]
+    Drift(#[from] vi_drift::Error),
+    #[error("capture: {0}")]
+    Capture(#[from] vi_capture::Error),
+    #[error("resonance: {0}")]
+    Resonance(#[from] vi_resonance::Error),
+    #[error("reckoning: {0}")]
+    Reckoning(#[from] vi_reckoning::Error),
     #[error("case not found")]
     NotFound,
+    #[error("flag not found")]
+    FlagNotFound,
+    #[error("invalid review status: {0}")]
+    InvalidStatus(String),
+    #[error("invalid resolution: {0}")]
+    InvalidResolution(String),
+    #[error("unresolved-officials entry not found")]
+    UnresolvedNotFound,
+    #[error("unresolved-officials entry is already resolved")]
+    AlreadyResolved,
 }
+
+/// The stages every case is walked through, in order. Kept as data so the
+/// per-run report can count a stage that ran zero times instead of dropping
+/// it silently.
+pub const STAGES: &[&str] = &[
+    "forum",
+    "constitution_screen",
+    "evidence_leads",
+    "abuse_rules",
+    "actor_links",
+    "score",
+    "tactics_occurrences",
+    "trial_penalty",
+    "monell_refresh",
+    "sim_calibration",
+    "correlation_refresh",
+    "drift_ingest_signals",
+    "drift_detect",
+    "capture_rebuild",
+    "capture_metrics",
+    "resonance_compute",
+];
+
+/// Fixed seed for the pipeline's capture-metric null model, so repeated
+/// pipeline runs are reproducible and the ledger events are comparable.
+pub const CAPTURE_NULL_SEED: u64 = 0xC4A7_0E15;
+
+/// Hazard (expected segment length) for drift detection triggered by the
+/// pipeline; conservative, matches the API route default.
+pub const DRIFT_DEFAULT_HAZARD: f64 = 50.0;
 
 /// Result of one stage. A stage that cannot run says so and why; it never
 /// pretends to have succeeded.
@@ -101,6 +184,12 @@ pub struct RunSummary {
     pub flags_fired: i64,
     pub evidence_gaps: i64,
     pub actors_linked: i64,
+    /// Per-stage counts across the batch: how many cases each stage processed,
+    /// skipped for lack of data, or failed on. A stage that had nothing to
+    /// work with shows up here as skipped, not as silence.
+    pub stage_counts: Value,
+    /// The `pipeline_reports` row persisted for this batch.
+    pub report_id: Option<Uuid>,
     pub runs: Vec<CaseRun>,
 }
 
@@ -145,6 +234,8 @@ pub async fn run_cases(
         flags_fired: 0,
         evidence_gaps: 0,
         actors_linked: 0,
+        stage_counts: json!({}),
+        report_id: None,
         runs: Vec::new(),
     };
 
@@ -171,6 +262,45 @@ pub async fn run_cases(
         summary.actors_linked += i64::from(run.actors_linked);
         summary.runs.push(run);
     }
+
+    // Per-run report: for every stage, how many cases it processed, how many
+    // it skipped for lack of data, and how many it failed on. Stages are
+    // counted under their canonical names even when no case reached them, so
+    // a stage that silently stopped running reads as zeros, not absence.
+    let mut counts = serde_json::Map::new();
+    for stage in STAGES {
+        counts.insert(
+            stage.to_string(),
+            json!({ "processed": 0, "skipped_no_data": 0, "failed": 0 }),
+        );
+    }
+    for run in &summary.runs {
+        for stage in &run.stages {
+            let entry = counts
+                .entry(stage.stage.to_string())
+                .or_insert_with(|| json!({ "processed": 0, "skipped_no_data": 0, "failed": 0 }));
+            let key = match stage.status {
+                "ok" => "processed",
+                "skipped" => "skipped_no_data",
+                _ => "failed",
+            };
+            if let Some(v) = entry.get(key).and_then(Value::as_i64) {
+                entry[key] = json!(v + 1);
+            }
+        }
+    }
+    summary.stage_counts = Value::Object(counts);
+
+    let report_id = sqlx::query_scalar::<_, Uuid>(
+        "INSERT INTO pipeline_reports (trigger, cases_processed, stage_counts)
+         VALUES ($1,$2,$3) RETURNING report_id",
+    )
+    .bind(trigger)
+    .bind(summary.cases_processed as i32)
+    .bind(&summary.stage_counts)
+    .fetch_one(pool)
+    .await?;
+    summary.report_id = Some(report_id);
 
     Ok(summary)
 }
@@ -395,6 +525,246 @@ pub async fn run_case(
         ));
     }
 
+    // --- 7. Tactic occurrences --------------------------------------------
+    // Match the record against the tactic catalog. A case with no text and
+    // no charge list has nothing to match against — that is a counted skip,
+    // not a silent drop.
+    let n_charges: i64 = sqlx::query_scalar(
+        "SELECT COALESCE(cardinality(charges), 0)::bigint FROM court_cases WHERE case_id = $1",
+    )
+    .bind(case_id)
+    .fetch_one(pool)
+    .await?;
+    if header.opinion_count == 0 && n_charges == 0 {
+        stages.push(StageOutcome::skipped(
+            "tactics_occurrences",
+            "no opinion text or charge list for this case",
+        ));
+    } else {
+        match vi_tactics::match_case_occurrences(pool, ledger, case_id).await {
+            Ok(occurrences) => stages.push(StageOutcome::ok(
+                "tactics_occurrences",
+                json!({
+                    "occurrences_recorded": occurrences.len(),
+                    "occurrences": occurrences,
+                    "review_status": "pending",
+                    "note": "An occurrence records that the public record mentions a \
+                             doctrine. It accuses no one and publishes nothing.",
+                }),
+            )),
+            Err(e) => stages.push(StageOutcome::failed(
+                "tactics_occurrences",
+                &e.to_string(),
+            )),
+        }
+    }
+
+    // --- 8. Trial-penalty accumulation -------------------------------------
+    match vi_trial_penalty::distribution::accumulate_case(pool, ledger, case_id).await {
+        Ok(vi_trial_penalty::distribution::Accumulation::Accumulated { office }) => {
+            stages.push(StageOutcome::ok(
+                "trial_penalty",
+                json!({ "accumulated": true, "office": office }),
+            ));
+        }
+        Ok(vi_trial_penalty::distribution::Accumulation::SkippedNoData { missing }) => {
+            stages.push(StageOutcome::skipped(
+                "trial_penalty",
+                &format!(
+                    "case carries no {} — most public feeds publish none",
+                    missing.join(", ")
+                ),
+            ));
+        }
+        Err(e) => stages.push(StageOutcome::failed("trial_penalty", &e.to_string())),
+    }
+
+    // --- 9. Monell fingerprint refresh --------------------------------------
+    match header.office.as_deref() {
+        None => stages.push(StageOutcome::skipped(
+            "monell_refresh",
+            "case is not attributed to an office",
+        )),
+        Some(office) => {
+            match vi_monell_atlas::stats::refresh_office_fingerprint(
+                pool,
+                office,
+                Some(&header.jurisdiction),
+            )
+            .await
+            {
+                Ok(fp) => stages.push(StageOutcome::ok(
+                    "monell_refresh",
+                    json!({
+                        "office": fp.office,
+                        "total_substantiated": fp.total_substantiated,
+                        "note": "Fingerprints count counsel-substantiated findings only.",
+                    }),
+                )),
+                Err(e) => stages.push(StageOutcome::failed("monell_refresh", &e.to_string())),
+            }
+        }
+    }
+
+    // --- 10. Sim prior calibration refresh ----------------------------------
+    match header.office.as_deref() {
+        None => stages.push(StageOutcome::skipped(
+            "sim_calibration",
+            "case is not attributed to an office",
+        )),
+        Some(office) => match refresh_office_sim_stats(pool, office, &header.jurisdiction).await {
+            Ok(detail) => stages.push(StageOutcome::ok("sim_calibration", detail)),
+            Err(e) => stages.push(StageOutcome::failed("sim_calibration", &e.to_string())),
+        },
+    }
+
+    // --- 11. Correlation refresh --------------------------------------------
+    match header.office.as_deref() {
+        None => stages.push(StageOutcome::skipped(
+            "correlation_refresh",
+            "case is not attributed to an office",
+        )),
+        Some(office) => {
+            match refresh_office_correlation(pool, office, &header.jurisdiction).await {
+                Ok(detail) => {
+                    if detail.get("plea_sentence_r").map(|v| v.is_null()).unwrap_or(true)
+                        && detail
+                            .get("plea_sentence_n")
+                            .and_then(Value::as_i64)
+                            .unwrap_or(0)
+                            == 0
+                    {
+                        stages.push(StageOutcome::skipped(
+                            "correlation_refresh",
+                            "office has no paired plea-offer/sentence observations",
+                        ));
+                    } else {
+                        stages.push(StageOutcome::ok("correlation_refresh", detail));
+                    }
+                }
+                Err(e) => stages.push(StageOutcome::failed("correlation_refresh", &e.to_string())),
+            }
+        }
+    }
+
+    // --- 12. Drift signal ingestion -----------------------------------------
+    // Fold this case's screened opinions into the per-(court, clause) outcome
+    // series. Corpus-wide but idempotent; a case without opinions contributes
+    // nothing and says so.
+    if header.opinion_count == 0 {
+        stages.push(StageOutcome::skipped(
+            "drift_ingest_signals",
+            "no opinions to derive outcome signals from",
+        ));
+    } else {
+        match vi_drift::ingest_signals(pool).await {
+            Ok(report) => stages.push(StageOutcome::ok(
+                "drift_ingest_signals",
+                serde_json::to_value(&report).unwrap_or_else(|_| json!({})),
+            )),
+            Err(e) => stages.push(StageOutcome::failed("drift_ingest_signals", &e.to_string())),
+        }
+    }
+
+    // --- 13. Drift detection --------------------------------------------------
+    // Detect over exactly the series this case feeds, never over series it
+    // has nothing to do with.
+    let drift_pairs: Vec<(String, String)> = sqlx::query_as(
+        "SELECT DISTINCT d.court_id, d.clause_id
+           FROM drift_observations d
+           JOIN court_opinions o
+             ON d.source_ref = COALESCE(o.source_ref, 'opinion:' || o.opinion_id::text)
+          WHERE o.case_id = $1
+          ORDER BY d.court_id, d.clause_id",
+    )
+    .bind(case_id)
+    .fetch_all(pool)
+    .await?;
+    if drift_pairs.is_empty() {
+        stages.push(StageOutcome::skipped(
+            "drift_detect",
+            "case contributes no drift observations (no screen-hit clauses with a \
+             lexicon match)",
+        ));
+    } else {
+        let mut detail = Vec::new();
+        let mut failed = false;
+        for (court_id, clause_id) in &drift_pairs {
+            match vi_drift::detect(pool, court_id, clause_id, DRIFT_DEFAULT_HAZARD).await {
+                Ok(cps) => detail.push(json!({
+                    "court_id": court_id,
+                    "clause_id": clause_id,
+                    "changepoints": cps.len(),
+                })),
+                Err(e) => {
+                    stages.push(StageOutcome::failed(
+                        "drift_detect",
+                        &format!("{court_id}/{clause_id}: {e}"),
+                    ));
+                    failed = true;
+                    break;
+                }
+            }
+        }
+        if !failed {
+            stages.push(StageOutcome::ok(
+                "drift_detect",
+                json!({ "series": detail, "status": "pending" }),
+            ));
+        }
+    }
+
+    // --- 14. Capture edge rebuild ---------------------------------------------
+    if header.opinion_count == 0 {
+        stages.push(StageOutcome::skipped(
+            "capture_rebuild",
+            "no opinions to rebuild the capture graph from",
+        ));
+    } else {
+        match vi_capture::rebuild_edges(pool).await {
+            Ok(report) => stages.push(StageOutcome::ok(
+                "capture_rebuild",
+                serde_json::to_value(&report).unwrap_or_else(|_| json!({})),
+            )),
+            Err(e) => stages.push(StageOutcome::failed("capture_rebuild", &e.to_string())),
+        }
+    }
+
+    // --- 15. Capture metrics ----------------------------------------------------
+    let edge_count: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM capture_edges")
+        .fetch_one(pool)
+        .await?;
+    if edge_count == 0 {
+        stages.push(StageOutcome::skipped(
+            "capture_metrics",
+            "no capture edges (no authored opinions with a lexicon outcome signal)",
+        ));
+    } else {
+        match vi_capture::compute_metrics(pool, vi_capture::MIN_PERMUTATIONS, CAPTURE_NULL_SEED)
+            .await
+        {
+            Ok(report) => stages.push(StageOutcome::ok(
+                "capture_metrics",
+                serde_json::to_value(&report).unwrap_or_else(|_| json!({})),
+            )),
+            Err(e) => stages.push(StageOutcome::failed("capture_metrics", &e.to_string())),
+        }
+    }
+
+    // --- 16. Resonance — LAST, after every signal producer ----------------------
+    match vi_resonance::compute_all(pool).await {
+        Ok(report) => stages.push(StageOutcome::ok(
+            "resonance_compute",
+            json!({
+                "scored": report.scored,
+                "surfaced": report.surfaced,
+                "surface_q": vi_resonance::SURFACE_Q,
+                "status": "pending",
+            }),
+        )),
+        Err(e) => stages.push(StageOutcome::failed("resonance_compute", &e.to_string())),
+    }
+
     let failed = stages.iter().filter(|s| s.status == "failed").count();
     let status = if failed == 0 {
         "ok"
@@ -454,6 +824,261 @@ pub async fn run_case(
         evidence_gaps,
         actors_linked,
     })
+}
+
+/// Refresh the stored office statistics the zero-day sim calibrates from
+/// (`/simulate/from-case` reads these). Counts and means come straight from
+/// `court_cases`; an office with no outcomes stores NULLs, and the sim then
+/// says `priors_source: "fallback"` rather than inventing a rate.
+async fn refresh_office_sim_stats(
+    pool: &PgPool,
+    office: &str,
+    jurisdiction: &str,
+) -> Result<Value, Error> {
+    let row: (i64, Option<f64>, Option<f64>, Option<f64>) = sqlx::query_as(
+        "SELECT COUNT(*) FILTER (WHERE c.outcome IS NOT NULL),
+                (COUNT(*) FILTER (WHERE c.outcome = 'conviction')::float8
+                  / NULLIF(COUNT(*) FILTER (WHERE c.outcome IS NOT NULL), 0)),
+                AVG(c.sentence_months::float8) FILTER (WHERE c.plea_accepted),
+                AVG(c.sentence_months::float8)
+                  FILTER (WHERE NOT c.plea_accepted AND c.outcome = 'conviction')
+           FROM court_cases c
+           JOIN prosecutors p ON p.prosecutor_id = c.prosecutor_id
+          WHERE p.office = $1",
+    )
+    .bind(office)
+    .fetch_one(pool)
+    .await?;
+    let (cases_with_outcome, conviction_rate, mean_plea, mean_trial) = row;
+
+    sqlx::query(
+        "INSERT INTO office_sim_stats
+           (office, jurisdiction, cases_with_outcome, conviction_rate,
+            mean_plea_months, mean_trial_months)
+         VALUES ($1,$2,$3,$4,$5,$6)
+         ON CONFLICT (office) DO UPDATE SET
+            jurisdiction = EXCLUDED.jurisdiction,
+            cases_with_outcome = EXCLUDED.cases_with_outcome,
+            conviction_rate = EXCLUDED.conviction_rate,
+            mean_plea_months = EXCLUDED.mean_plea_months,
+            mean_trial_months = EXCLUDED.mean_trial_months,
+            computed_at = now()",
+    )
+    .bind(office)
+    .bind(jurisdiction)
+    .bind(cases_with_outcome as i32)
+    .bind(conviction_rate)
+    .bind(mean_plea)
+    .bind(mean_trial)
+    .execute(pool)
+    .await?;
+
+    Ok(json!({
+        "office": office,
+        "cases_with_outcome": cases_with_outcome,
+        "conviction_rate": conviction_rate,
+        "mean_plea_months": mean_plea,
+        "mean_trial_months": mean_trial,
+        "note": if cases_with_outcome == 0 {
+            "Office has no recorded outcomes yet; the sim will report its \
+             fallback priors rather than a fabricated rate."
+        } else {
+            "Stored aggregates refreshed from public records."
+        },
+    }))
+}
+
+/// Refresh an office's plea-offer vs sentence-length correlation from the
+/// accumulated public records (vi-correlation over office stats). Fewer than
+/// 4 paired observations is reported as absent — a correlation over three
+/// points is numerology, not a statistic.
+async fn refresh_office_correlation(
+    pool: &PgPool,
+    office: &str,
+    jurisdiction: &str,
+) -> Result<Value, Error> {
+    let rows: Vec<(i32, i32)> = sqlx::query_as(
+        "SELECT c.plea_offer_months, c.sentence_months
+           FROM court_cases c
+           JOIN prosecutors p ON p.prosecutor_id = c.prosecutor_id
+          WHERE p.office = $1
+            AND c.plea_offer_months IS NOT NULL
+            AND c.sentence_months IS NOT NULL",
+    )
+    .bind(office)
+    .fetch_all(pool)
+    .await?;
+    let x: Vec<f64> = rows.iter().map(|(a, _)| *a as f64).collect();
+    let y: Vec<f64> = rows.iter().map(|(_, b)| *b as f64).collect();
+    let r = vi_correlation::pearson(&x, &y).map(|res| res.r);
+
+    sqlx::query(
+        "INSERT INTO office_sim_stats (office, jurisdiction, plea_sentence_r, plea_sentence_n)
+         VALUES ($1,$2,$3,$4)
+         ON CONFLICT (office) DO UPDATE SET
+            plea_sentence_r = EXCLUDED.plea_sentence_r,
+            plea_sentence_n = EXCLUDED.plea_sentence_n,
+            computed_at = now()",
+    )
+    .bind(office)
+    .bind(jurisdiction)
+    .bind(r)
+    .bind(rows.len() as i32)
+    .execute(pool)
+    .await?;
+
+    Ok(json!({
+        "office": office,
+        "plea_sentence_r": r,
+        "plea_sentence_n": rows.len(),
+        "note": if r.is_none() {
+            "Fewer than 4 paired observations; no correlation is stored or shown."
+        } else {
+            "Pearson r over stored plea-offer/sentence pairs."
+        },
+    }))
+}
+
+/// Counsel review of an automated abuse flag: `substantiated` or `rejected`.
+///
+/// This is the gate between a machine lead and a public record. Substantiating
+/// a flag recomputes the Abuse Score of every individual the flag is linked
+/// to (scores count substantiated material only), so the score trail and the
+/// ledger reflect the review the moment it happens.
+pub async fn review_flag(
+    pool: &PgPool,
+    ledger: &Ledger,
+    flag_id: Uuid,
+    status: &str,
+    notes: Option<&str>,
+) -> Result<Value, Error> {
+    if !matches!(status, "substantiated" | "rejected") {
+        return Err(Error::InvalidStatus(status.to_string()));
+    }
+
+    let row: Option<(Uuid, Option<Uuid>, Option<Uuid>)> = sqlx::query_as(
+        "UPDATE abuse_flags
+            SET review_status = $1, reviewed_at = now(), review_notes = $3
+          WHERE flag_id = $2
+          RETURNING case_id, actor_id, prosecutor_id",
+    )
+    .bind(status)
+    .bind(flag_id)
+    .bind(notes)
+    .fetch_optional(pool)
+    .await?;
+    let (case_id, flag_actor_id, flag_prosecutor_id) = row.ok_or(Error::FlagNotFound)?;
+
+    ledger
+        .append(
+            vi_ledger::events::FLAG_REVIEWED,
+            &json!({
+                "flag_id": flag_id,
+                "case_id": case_id,
+                "status": status,
+                "notes": notes,
+            }),
+        )
+        .await?;
+
+    // Substantiation changes what the Abuse Score counts for the individuals
+    // this flag concerns: the linked actor, and any actor resolved to the
+    // prosecutor record the flag names.
+    let mut rescored = Vec::new();
+    if status == "substantiated" {
+        let mut actor_ids: Vec<Uuid> = flag_actor_id.into_iter().collect();
+        if let Some(pid) = flag_prosecutor_id {
+            let more = sqlx::query_scalar::<_, Uuid>(
+                "SELECT actor_id FROM accountability_actors WHERE prosecutor_id = $1",
+            )
+            .bind(pid)
+            .fetch_all(pool)
+            .await?;
+            for id in more {
+                if !actor_ids.contains(&id) {
+                    actor_ids.push(id);
+                }
+            }
+        }
+        for actor_id in actor_ids {
+            let score = vi_reckoning::score_actor(pool, Some(ledger), actor_id).await?;
+            rescored.push(json!({
+                "actor_id": actor_id,
+                "score": score.score,
+                "snapshot_id": score.snapshot_id,
+            }));
+        }
+    }
+
+    Ok(json!({
+        "flag_id": flag_id,
+        "case_id": case_id,
+        "review_status": status,
+        "rescored_actors": rescored,
+        "note": "A substantiated flag is counsel's finding from the public record; \
+                 a pending or rejected flag feeds no score and no public page.",
+    }))
+}
+
+/// Close an unresolved-officials queue entry.
+///
+/// `identified` means a human read the raw field and named the individuals
+/// (resolution of those individuals into actors is a separate, deliberate
+/// step via `/reckoning/resolve`); `not_identifiable` means the record does
+/// not support naming anyone and the entry is closed as such. Either way the
+/// close-out is ledger-chained.
+pub async fn resolve_unresolved(
+    pool: &PgPool,
+    ledger: &Ledger,
+    unresolved_id: Uuid,
+    resolution: &str,
+    notes: Option<&str>,
+) -> Result<Value, Error> {
+    if !matches!(resolution, "identified" | "not_identifiable") {
+        return Err(Error::InvalidResolution(resolution.to_string()));
+    }
+
+    let current: Option<(Uuid, bool)> = sqlx::query_as(
+        "SELECT case_id, resolved_at IS NOT NULL FROM unresolved_officials WHERE unresolved_id = $1",
+    )
+    .bind(unresolved_id)
+    .fetch_optional(pool)
+    .await?;
+    let Some((case_id, already)) = current else {
+        return Err(Error::UnresolvedNotFound);
+    };
+    if already {
+        return Err(Error::AlreadyResolved);
+    }
+
+    sqlx::query(
+        "UPDATE unresolved_officials
+            SET resolved_at = now(), resolution = $2, resolution_notes = $3
+          WHERE unresolved_id = $1",
+    )
+    .bind(unresolved_id)
+    .bind(resolution)
+    .bind(notes)
+    .execute(pool)
+    .await?;
+
+    ledger
+        .append(
+            vi_ledger::events::OFFICIAL_RESOLVED,
+            &json!({
+                "unresolved_id": unresolved_id,
+                "case_id": case_id,
+                "resolution": resolution,
+                "notes": notes,
+            }),
+        )
+        .await?;
+
+    Ok(json!({
+        "unresolved_id": unresolved_id,
+        "case_id": case_id,
+        "resolution": resolution,
+    }))
 }
 
 /// Evaluate every enabled rule against one case, recording pending flags.
@@ -847,16 +1472,26 @@ pub async fn status(pool: &PgPool) -> Result<Value, Error> {
     .fetch_one(pool)
     .await?;
 
+    let latest_report = sqlx::query_scalar::<_, Value>(
+        "SELECT jsonb_build_object(
+                  'report_id', report_id,
+                  'trigger', trigger,
+                  'cases_processed', cases_processed,
+                  'stage_counts', stage_counts,
+                  'created_at', created_at)
+           FROM pipeline_reports ORDER BY created_at DESC LIMIT 1",
+    )
+    .fetch_optional(pool)
+    .await?;
+
     Ok(json!({
         "cases": { "total": total, "awaiting_pipeline": pending },
         "runs_by_status": by_status,
         "unresolved_officials": unresolved,
         "totals": totals,
         "recent": recent,
-        "stages": [
-            "forum", "constitution_screen", "evidence_leads",
-            "abuse_rules", "actor_links", "score",
-        ],
+        "stages": STAGES,
+        "latest_report": latest_report,
         "note": "Everything the pipeline produces is pending review. Publication is a \
                  separate act by licensed counsel.",
     }))
