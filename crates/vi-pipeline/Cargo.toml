@@ -1,0 +1,22 @@
+[package]
+name = "vi-pipeline"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+chrono = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sqlx = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+uuid = { workspace = true }
+vi-brady-recon = { path = "../vi-brady-recon" }
+vi-constitution = { path = "../vi-constitution" }
+vi-db = { path = "../vi-db" }
+vi-ledger = { path = "../vi-ledger" }
+vi-reckoning = { path = "../vi-reckoning" }
+vi-trustscript = { path = "../vi-trustscript" }
+
+[dev-dependencies]
+tokio = { workspace = true }
