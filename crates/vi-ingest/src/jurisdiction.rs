@@ -253,7 +253,12 @@ mod tests {
 
     #[test]
     fn scotus_is_federal() {
-        let m = derive("scotus", Some("F"), "Supreme Court of the United States", None);
+        let m = derive(
+            "scotus",
+            Some("F"),
+            "Supreme Court of the United States",
+            None,
+        );
         assert_eq!(m.jurisdiction.as_deref(), Some("US"));
         assert_eq!(m.court_level.as_deref(), Some(SCOTUS));
     }
@@ -300,7 +305,12 @@ mod tests {
 
     #[test]
     fn west_virginia_is_not_virginia() {
-        let m = derive("wva", Some("S"), "Supreme Court of Appeals of West Virginia", None);
+        let m = derive(
+            "wva",
+            Some("S"),
+            "Supreme Court of Appeals of West Virginia",
+            None,
+        );
         assert_eq!(m.jurisdiction.as_deref(), Some("WV"));
     }
 

@@ -8,8 +8,8 @@
 
 use anyhow::{Context, Result};
 use quick_xml::events::Event;
-use quick_xml::XmlVersion;
 use quick_xml::Reader;
+use quick_xml::XmlVersion;
 
 #[derive(Debug, Clone, Default, PartialEq, Eq)]
 pub struct Entry {

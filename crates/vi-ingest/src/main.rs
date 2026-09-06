@@ -15,6 +15,7 @@
 //! INGEST_INTERVAL_SECS  loop interval; unset means a single cycle
 //! INGEST_PIPELINE       set to 0 to ingest without running the engines
 //! INGEST_PIPELINE_LIMIT cases per cycle handed to the pipeline (default 200)
+//! INGEST_COURT_LOOKUP   set to 0 to never fetch a court the registry lacks
 //! ```
 use anyhow::Result;
 use vi_ingest::{configured_from_env, run_specs};
@@ -78,6 +79,26 @@ async fn main() -> Result<()> {
                 );
             }
             Err(e) => tracing::error!(cycle, error = %e, "every feed failed this cycle"),
+        }
+
+        // Place any court the cycle could not resolve before the engines run.
+        // A case left at `unknown` is a case screening must skip, and screening
+        // it under a body of law that may not govern it would be worse.
+        match vi_ingest::backfill_unplaced_courts(&pool).await {
+            Ok(report) => {
+                let updated = report
+                    .get("cases_updated")
+                    .and_then(serde_json::Value::as_u64)
+                    .unwrap_or(0);
+                if updated > 0 {
+                    tracing::info!(
+                        cycle,
+                        cases = updated,
+                        "placed cases whose court was unknown"
+                    );
+                }
+            }
+            Err(e) => tracing::warn!(cycle, error = %e, "court placement failed"),
         }
 
         if run_pipeline {

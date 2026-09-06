@@ -84,8 +84,10 @@ async fn get_text(client: &reqwest::Client, url: &str, token: Option<&str>) -> R
             }
             Err(e) => {
                 last = e.to_string();
-                tokio::time::sleep(std::time::Duration::from_millis(300 * u64::from(attempt + 1)))
-                    .await;
+                tokio::time::sleep(std::time::Duration::from_millis(
+                    300 * u64::from(attempt + 1),
+                ))
+                .await;
             }
         }
     }
@@ -173,7 +175,10 @@ fn court_record(r: Value) -> Option<CourtRecord> {
         .to_string();
     Some(CourtRecord {
         full_name,
-        short_name: r.get("short_name").and_then(Value::as_str).map(str::to_string),
+        short_name: r
+            .get("short_name")
+            .and_then(Value::as_str)
+            .map(str::to_string),
         citation_string: r
             .get("citation_string")
             .and_then(Value::as_str)
@@ -275,10 +280,7 @@ impl Source for CourtRegistry {
                 .cloned()
                 .unwrap_or_default();
             courts.extend(results.into_iter().filter_map(court_record));
-            next = body
-                .get("next")
-                .and_then(Value::as_str)
-                .map(str::to_string);
+            next = body.get("next").and_then(Value::as_str).map(str::to_string);
             match &next {
                 Some(n) => url = n.clone(),
                 None => break,
@@ -415,10 +417,7 @@ impl Source for SearchFeed {
                 .filter(|s| !s.is_empty())
                 .map(str::to_string);
             let filed = date(r.get("dateFiled").and_then(Value::as_str));
-            let case_url = r
-                .get("absolute_url")
-                .and_then(Value::as_str)
-                .map(absolute);
+            let case_url = r.get("absolute_url").and_then(Value::as_str).map(absolute);
 
             cases.push(NormalizedCase {
                 docket_number: docket.clone(),
@@ -476,10 +475,7 @@ impl Source for SearchFeed {
             cases,
             opinions,
             skipped,
-            next_cursor: body
-                .get("next")
-                .and_then(Value::as_str)
-                .map(str::to_string),
+            next_cursor: body.get("next").and_then(Value::as_str).map(str::to_string),
             ..Default::default()
         })
     }
@@ -666,10 +662,7 @@ fn map_docket(r: Value) -> Option<NormalizedCase> {
         filed: date(r.get("date_filed").and_then(Value::as_str)),
         court_lat: None,
         court_lng: None,
-        source_url: r
-            .get("absolute_url")
-            .and_then(Value::as_str)
-            .map(absolute),
+        source_url: r.get("absolute_url").and_then(Value::as_str).map(absolute),
         raw: r,
     })
 }
@@ -716,10 +709,7 @@ fn map_opinion(r: &Value) -> Option<NormalizedOpinion> {
         ),
         text,
         completeness: Completeness::Full,
-        source_url: r
-            .get("absolute_url")
-            .and_then(Value::as_str)
-            .map(absolute),
+        source_url: r.get("absolute_url").and_then(Value::as_str).map(absolute),
         source_ref: r
             .get("id")
             .and_then(Value::as_i64)

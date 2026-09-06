@@ -278,10 +278,7 @@ pub async fn run_case(
                         }),
                     ));
                 }
-                Err(e) => stages.push(StageOutcome::failed(
-                    "constitution_screen",
-                    &e.to_string(),
-                )),
+                Err(e) => stages.push(StageOutcome::failed("constitution_screen", &e.to_string())),
             },
         }
     } else {
@@ -324,9 +321,7 @@ pub async fn run_case(
                             }),
                         ));
                     }
-                    Err(e) => {
-                        stages.push(StageOutcome::failed("evidence_leads", &e.to_string()))
-                    }
+                    Err(e) => stages.push(StageOutcome::failed("evidence_leads", &e.to_string())),
                 }
             }
             Err(e) => stages.push(StageOutcome::failed("evidence_leads", &e.to_string())),
@@ -368,12 +363,11 @@ pub async fn run_case(
     }
 
     // --- 6. Score ---------------------------------------------------------
-    let linked_ids = sqlx::query_scalar::<_, Uuid>(
-        "SELECT actor_id FROM actor_case_links WHERE case_id = $1",
-    )
-    .bind(case_id)
-    .fetch_all(pool)
-    .await?;
+    let linked_ids =
+        sqlx::query_scalar::<_, Uuid>("SELECT actor_id FROM actor_case_links WHERE case_id = $1")
+            .bind(case_id)
+            .fetch_all(pool)
+            .await?;
     let mut scores = Vec::new();
     let mut score_failures = Vec::new();
     for actor_id in &linked_ids {
@@ -475,10 +469,11 @@ pub async fn run_rules_for_case(
         .await?
         .ok_or(Error::NotFound)?;
 
-    let rules =
-        sqlx::query_as::<_, (Uuid, String)>("SELECT rule_id, source FROM abuse_rules WHERE enabled")
-            .fetch_all(pool)
-            .await?;
+    let rules = sqlx::query_as::<_, (Uuid, String)>(
+        "SELECT rule_id, source FROM abuse_rules WHERE enabled",
+    )
+    .fetch_all(pool)
+    .await?;
 
     let prosecutor_id = ctx
         .pointer("/case/prosecutor_id")
@@ -658,10 +653,7 @@ async fn link_actors(
 /// An ambiguous entry is a question for a human: which individuals does this
 /// field name? Until someone answers, nobody is named and nobody accrues a
 /// record from it.
-pub async fn unresolved_officials(
-    pool: &PgPool,
-    include_resolved: bool,
-) -> Result<Value, Error> {
+pub async fn unresolved_officials(pool: &PgPool, include_resolved: bool) -> Result<Value, Error> {
     let rows = sqlx::query_scalar::<_, Value>(
         "SELECT COALESCE(jsonb_agg(x ORDER BY x->>'first_seen_at' DESC), '[]'::jsonb) FROM (
             SELECT jsonb_build_object(

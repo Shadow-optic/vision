@@ -1,6 +1,6 @@
 # VisionInjustice
 
-A Rust monorepo for **systemic criminal-justice accountability**. Fourteen engines operate on **public records and counsel-substantiated findings only** — no OSINT, no leaked data, no publication of pending automated flags. After licensed counsel substantiates a public-record finding, the official's public-record identity and those findings are published. The engines do not file charges. After a conviction they advocate for the statutory maximum the same law provides, including life imprisonment where 18 U.S.C. §§ 241, 242, or 1512 authorize it.
+A Rust monorepo for **systemic criminal-justice accountability**. Fifteen engines operate on **public records and counsel-substantiated findings only** — no OSINT, no leaked data, no publication of pending automated flags. After licensed counsel substantiates a public-record finding, the official's public-record identity and those findings are published. The engines do not file charges. After a conviction they advocate for the statutory maximum the same law provides, including life imprisonment where 18 U.S.C. §§ 241, 242, or 1512 authorize it.
 
 The engines run as a Rust service (`vi-api`) behind a gateway. The public platform is a Cloudflare Worker that renders the Wall of Injustice, the statute and immunity catalogs, case-law search, the referral tracker, and a read-only JSON mirror — see [the public platform](#the-public-platform) and [DEPLOYMENT.md](DEPLOYMENT.md).
 
@@ -17,7 +17,8 @@ The API is compile-time database-URL-free (runtime-checked SQL) and hash-chained
 | Abuse detection | `vi-trustscript` | Lexer/parser/evaluator + rule CRUD + ledger flags |
 | Zero-day sim | `vi-sim` | Seeded Monte Carlo; `POST /simulate/from-case/:id` calibrates priors from stored office stats |
 | H3 intelligence | `vi-geo` | Multi-res ladder at ingest; k-ring (`grid_disk`) disparity API |
-| Telemetry / ingest | `vi-ingest` | CourtListener + fixture sources, cursor checkpoints, API-triggered poll |
+| Telemetry / ingest | `vi-ingest` | Live public feeds — courts registry, search, per-court Atom — with cursor checkpoints; partial opinion text is labelled as such |
+| Post-ingest pipeline | `vi-pipeline` | Walks each new record through forum resolution, screening, evidence leads, abuse rules, individual linkage, scoring — all pending |
 | JIT LASM | `vi-lasm` | Evidence package: flags, Brady leads, Monell, trial-penalty, constitution screen, ledger provenance |
 | Monell atlas | `vi-monell-atlas` | Pattern-and-practice fingerprint + §1983 scaffold |
 | Brady recon | `vi-brady-recon` | Expected vs disclosed evidence; gaps are *leads* |
@@ -25,7 +26,7 @@ The API is compile-time database-URL-free (runtime-checked SQL) and hash-chained
 | Constitution / Bill of Rights | `vi-constitution` | Native corpus (Arts. I–VII + Amends. 1–27), 50-state dropdowns, stare-decisis resolver, advisory screens |
 | Reckoning / individual accountability | `vi-reckoning` | Named-actor resolution, formula-audited abuse scores, counsel-reviewed referral/bar/§1983 packages, Wall of Injustice for substantiated public-record findings |
 
-`GET /engines` lists all fourteen with live row counts.
+`GET /engines` lists every engine with live row counts.
 
 ## Quick start
 
@@ -132,11 +133,12 @@ The public site is a Cloudflare Worker in [`worker/`](worker/). It renders every
 | `/` | Mission, the publication gate, live totals |
 | `/wall`, `/wall/:id` | Wall of Injustice register and per-official records with citations, abuse score, statute mapping, and referrals |
 | `/statutes`, `/immunity` | Elements, statutory maxima, immunity limits — generated from `vi-reckoning` |
-| `/cases` | Full-text opinion search |
+| `/cases` | Opinion search, reporting how much of the stored corpus is complete text |
 | `/tracker` | Attorney-reviewed referrals and packages |
 | `/ledger` | Hash-chain verification |
 | `/doctrine`, `/corrections` | The doctrine; how corrections and victim-privacy holds work |
-| `/engines` | The fourteen engines with live row counts |
+| `/engines` | Every engine with live row counts |
+| `/sources` | The public feeds read, their current state, and what ingestion refuses |
 | `/api`, `/api/*` | Read-only JSON mirror and the documented allowlist |
 | `/healthz` | Edge and backend status for uptime checks |
 
@@ -164,11 +166,16 @@ Deployment, secrets, custom domains, and verification steps: [DEPLOYMENT.md](DEP
 docker compose up --build
 ```
 
-Runs Postgres, `vi-api` on `:8080`, and `vi-ingest` (fixture source on a 300s loop; set `INGEST_SOURCE=courtlistener` and `CL_API_TOKEN` for live dockets/opinions).
+Runs Postgres, `vi-api` on `:8080`, and `vi-ingest` polling the anonymous public
+CourtListener feeds on a 900s loop. Each cycle ingests, places any court it could
+not resolve, then walks new records through every engine — producing pending
+artifacts only. Without `CL_API_TOKEN` the feeds return extracts rather than
+complete opinions, and every such row is stored as `snippet` rather than passed
+off as an opinion. See [DEPLOYMENT.md](DEPLOYMENT.md#4-start-live-ingestion).
 
 - `GET /health` — liveness
 - `GET /ready` — database ping
-- `GET /engines` — fourteen-engine catalog + row counts
+- `GET /engines` — engine catalog + live row counts
 - `BIND_ADDR` (default `0.0.0.0:8080`), `DATABASE_URL`, `DATABASE_MAX_CONNECTIONS`
 - Graceful shutdown on SIGINT/SIGTERM
 - Request tracing, 60s timeouts, permissive CORS (replace with an allow-list behind your gateway)

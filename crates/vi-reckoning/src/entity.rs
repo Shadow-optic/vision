@@ -116,10 +116,7 @@ pub fn normalize_name(raw: &str) -> String {
     // "Associate Judge Easterly" and "Easterly" are one person. Leaving the
     // title in would file them as two, and a record split across two identities
     // is a record nobody is accountable for.
-    while tokens
-        .first()
-        .is_some_and(|t| TITLE_PREFIXES.contains(t))
-    {
+    while tokens.first().is_some_and(|t| TITLE_PREFIXES.contains(t)) {
         tokens.remove(0);
     }
     tokens.join(" ")
@@ -238,10 +235,7 @@ fn collective_marker(s: &str) -> Option<&'static str> {
         .split_whitespace()
         .collect::<Vec<_>>()
         .join(" ");
-    COLLECTIVE_MARKERS
-        .iter()
-        .find(|m| norm == **m)
-        .copied()
+    COLLECTIVE_MARKERS.iter().find(|m| norm == **m).copied()
 }
 
 /// Split on the separators that can only be separators: semicolons and
@@ -853,11 +847,7 @@ mod tests {
     fn splits_panels_into_individuals() {
         assert_eq!(
             parse_officials("Mathias, DeBoer, Kenworthy"),
-            Officials::Individuals(vec![
-                "Mathias".into(),
-                "DeBoer".into(),
-                "Kenworthy".into()
-            ])
+            Officials::Individuals(vec!["Mathias".into(), "DeBoer".into(), "Kenworthy".into()])
         );
         assert_eq!(
             parse_officials("Bradford, Pyle III, Kenworthy"),

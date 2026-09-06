@@ -50,9 +50,7 @@ pub async fn sync(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
 
 /// Re-apply the current name rules to every identity, merging duplicates.
 pub async fn renormalize(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
-    Ok(Json(
-        vi_reckoning::renormalize(&st.pool, &st.ledger).await?,
-    ))
+    Ok(Json(vi_reckoning::renormalize(&st.pool, &st.ledger).await?))
 }
 
 pub async fn get_score(

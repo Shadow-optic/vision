@@ -34,9 +34,16 @@ services:
     command: ["vi-ingest"]
     environment:
       DATABASE_URL: postgres://postgres:postgres@db:5432/visioninjustice
-      INGEST_SOURCE: fixture
-      INGEST_INTERVAL_SECS: "300"
-      RUST_LOG: info,vi_ingest=debug
+      # Anonymous public feeds. The courts registry runs first because a record
+      # cannot be screened until its court is placed in a forum.
+      INGEST_SOURCES: courtlistener-courts,courtlistener-search,courtlistener-feed
+      CL_SEARCH_QUERIES: brady violation;prosecutorial misconduct;fabricated evidence
+      CL_FEED_COURTS: ca9,scotus
+      # Without a token these feeds yield extracts rather than opinions, and
+      # every such row is stored as `snippet` rather than passed off as one.
+      CL_API_TOKEN: "${CL_API_TOKEN:-}"
+      INGEST_INTERVAL_SECS: "900"
+      RUST_LOG: info,vi_ingest=info,vi_pipeline=info
     depends_on:
       db:
         condition: service_healthy

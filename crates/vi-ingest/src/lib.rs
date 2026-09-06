@@ -184,9 +184,7 @@ impl FeedSpec {
     pub fn build(&self) -> Result<Feed> {
         Ok(match self {
             FeedSpec::Fixture => Feed::Fixture(FixtureSource),
-            FeedSpec::Courts { pages } => {
-                Feed::Courts(courtlistener::CourtRegistry::new(*pages)?)
-            }
+            FeedSpec::Courts { pages } => Feed::Courts(courtlistener::CourtRegistry::new(*pages)?),
             FeedSpec::Search { query, backfill } => {
                 Feed::Search(courtlistener::SearchFeed::new(query, *backfill)?)
             }
@@ -485,9 +483,10 @@ pub async fn list_sources(pool: &PgPool) -> Result<Value> {
             .iter()
             .find(|r| r.get("source").and_then(Value::as_str) == Some(name.as_str()))
             .cloned();
-        let label = spec.build().map(|f| f.label()).unwrap_or_else(|e| {
-            format!("unavailable: {e}")
-        });
+        let label = spec
+            .build()
+            .map(|f| f.label())
+            .unwrap_or_else(|e| format!("unavailable: {e}"));
         sources.push(json!({
             "source": name,
             "label": label,
@@ -535,7 +534,11 @@ pub async fn list_sources(pool: &PgPool) -> Result<Value> {
 
 // ===== Execution =====
 
-pub async fn execute(pool: &PgPool, ledger: &vi_ledger::Ledger, source: &Feed) -> Result<RunReport> {
+pub async fn execute(
+    pool: &PgPool,
+    ledger: &vi_ledger::Ledger,
+    source: &Feed,
+) -> Result<RunReport> {
     let name = source.name().to_string();
     mark_started(pool, source).await?;
     let cursor = load_cursor(pool, &name).await?;
@@ -858,9 +861,7 @@ async fn resolve_forum(
         if let Some(jur) = derived.jurisdiction {
             return Ok((
                 jur,
-                derived
-                    .court_level
-                    .or_else(|| c.court_level.clone()),
+                derived.court_level.or_else(|| c.court_level.clone()),
                 "court_id",
             ));
         }
