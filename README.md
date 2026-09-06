@@ -156,7 +156,7 @@ Enforced in code, not in copy:
 - **Escaping by construction.** The template layer escapes every interpolated value, so an official's name or a finding summary can never become markup.
 - **A GET-only allowlist.** `/flags`, `/reckoning/actors`, bare abuse scores, attorney work product, case-level investigative leads, and every write route are unreachable from the public domain. [`worker/proxy.ts`](worker/proxy.ts) states the reason for each exclusion.
 - **A hold is a 404.** A card under a counsel hold is indistinguishable from one that never existed.
-- **No fabricated fallbacks.** With the backend down or unset, panels say so rather than show a number they cannot source.
+- **No fabricated fallbacks.** With a configured backend down, panels say so rather than show a number they cannot source. With no backend origin, the Worker serves public reads itself: live CourtListener search and an empty Wall — never a named official.
 - **Strict CSP**, HSTS, frame denial, no inline script or style, and separate per-client rate limits for pages and the API.
 
 ```bash

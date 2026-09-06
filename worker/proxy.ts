@@ -246,7 +246,7 @@ export async function proxy(cfg: SiteConfig, url: URL, backendPath: string): Pro
 		);
 	}
 
-	if (!cfg.apiOrigin) {
+	if (!cfg.apiOrigin && !cfg.edgeApi) {
 		return jsonResponse(
 			{
 				error: "backend_not_connected",

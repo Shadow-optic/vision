@@ -7,9 +7,9 @@
 		"enabled": true
 	},
 	"vars": {
-		// Origin of the Rust `vi-api` service. Empty until the backend is
-		// published: every page then renders its offline state instead of
-		// inventing data. Override per environment or with `wrangler secret`.
+		// Origin of the Rust `vi-api` service. Empty means the Worker serves
+		// the public-read API itself (live CourtListener search, empty Wall).
+		// Set this to a `vi-api` origin when the counsel backend is published.
 		"VI_API_ORIGIN": "",
 		"SITE_NAME": "VisionInjustice",
 		"CONTACT_EMAIL": "counsel@visioninjustice.org",
