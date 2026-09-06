@@ -150,6 +150,27 @@ describe("engine, tracker, ledger and search pages", () => {
 		expect(page).toContain(LEDGER.tip_hash);
 	});
 
+	it("shows the latest Merkle root and what the snapshot commits to", async () => {
+		const page = await body("/transparency");
+		expect(page).toContain("Transparency proof log");
+		expect(page).toContain(
+			"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+		);
+		expect(page).toContain("Published register entries");
+		expect(page).toContain("Ledger events");
+		expect(page).toContain('href="/ledger"');
+		// The snapshot page authenticates the published record; it must not
+		// present pending machine output.
+		expect(page).toContain("never part of a snapshot");
+	});
+
+	it("links the transparency page from the footer and sitemap", async () => {
+		const page = await body("/ledger");
+		expect(page).toContain('href="/transparency"');
+		const sitemap = await (await get("/sitemap.xml")).text();
+		expect(sitemap).toContain(`${SITE}/transparency`);
+	});
+
 	it("searches opinions through the backend", async () => {
 		const page = await body("/cases?q=brady");
 		expect(page).toContain("People v. Demo");

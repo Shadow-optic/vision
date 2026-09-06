@@ -103,6 +103,38 @@ describe("public api allowlist", () => {
 		expect(buildUpstreamPath(route!, url, "/reckoning/wall")).toBe("/reckoning/wall");
 	});
 
+	it("forwards the office filter the plea-sentence correlation requires", () => {
+		const route = matchAllowed("/stats/plea-sentence");
+		expect(route).not.toBeNull();
+		const url = new URL(
+			"https://site.test/api/stats/plea-sentence?office=Demo%20County%20DA&jurisdiction=CA&evil=1",
+		);
+		expect(buildUpstreamPath(route!, url, "/stats/plea-sentence")).toBe(
+			"/stats/plea-sentence?office=Demo+County+DA&jurisdiction=CA",
+		);
+	});
+
+	it("allows the transparency proof log reads", () => {
+		expect(matchAllowed("/transparency/snapshots")).not.toBeNull();
+		expect(matchAllowed("/transparency/snapshots/latest")).not.toBeNull();
+		expect(matchAllowed("/transparency/proof/wall_entries/abc-123")).not.toBeNull();
+	});
+
+	it("withholds pending machine-derived resonance, drift, and capture artifacts", () => {
+		// These are pending leads about identifiable cases and named officials;
+		// the doctrine forbids publishing pending automated output.
+		expect(matchAllowed("/resonance/cases")).toBeNull();
+		expect(matchAllowed("/resonance/case/abc")).toBeNull();
+		expect(matchAllowed("/drift/changepoints")).toBeNull();
+		expect(matchAllowed("/capture/outliers")).toBeNull();
+		for (const path of ["/resonance/cases", "/drift/changepoints", "/capture/outliers"]) {
+			expect(
+				WITHHELD.some((w) => w.path.includes(path)),
+				`${path} must be a documented exclusion on /api`,
+			).toBe(true);
+		}
+	});
+
 	it("caches every allowlisted read except liveness probes", () => {
 		for (const route of ALLOWED) {
 			if (route.pattern === "/health" || route.pattern === "/ready") continue;

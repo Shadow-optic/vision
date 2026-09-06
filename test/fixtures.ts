@@ -92,6 +92,28 @@ export const LEDGER = {
 	tip_hash: "b3aabbccddeeff00112233445566778899aabbccddeeff001122334455667788",
 };
 
+export const TRANSPARENCY_SNAPSHOTS = {
+	snapshots: [
+		{
+			id: "55555555-5555-4555-8555-555555555555",
+			created_at: "2026-03-01T00:00:00Z",
+			merkle_root:
+				"9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08",
+			tree_size: 21,
+			table_counts: {
+				__chain__: 2,
+				findings: 2,
+				ledger_events: 12,
+				referrals: 1,
+				statutes: 5,
+				wall_entries: 1,
+			},
+			prev_root: null,
+			ledger_seq: 12,
+		},
+	],
+};
+
 export const SEARCH = {
 	results: [
 		{

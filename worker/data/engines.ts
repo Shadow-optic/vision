@@ -112,4 +112,32 @@ export const ENGINES: EngineDescriptor[] = [
 			"Named-actor resolution, formula-audited abuse scores, counsel-reviewed referral, bar-complaint and § 1983 packages, and the Wall of Injustice.",
 		routes: ["/reckoning/actors", "/reckoning/wall", "/reckoning/statutes", "/reckoning/tracker"],
 	},
+	{
+		name: "Transparency proof log",
+		crate: "vi-transparency",
+		summary:
+			"Merkle-tree snapshots over the published dataset, anchored in the Root Ledger; inclusion proofs let anyone verify a published row was in a snapshot.",
+		routes: ["/transparency/snapshots", "/transparency/snapshots/latest", "/transparency/proof/:table/:row_id"],
+	},
+	{
+		name: "Weak-signal resonance",
+		crate: "vi-resonance",
+		summary:
+			"Fuses sub-threshold signals across engines into one composite score per case. Pending research leads, never findings; not part of the public mirror.",
+		routes: ["/resonance/compute", "/resonance/cases"],
+	},
+	{
+		name: "Doctrinal drift",
+		crate: "vi-drift",
+		summary:
+			"Bayesian changepoint detection over per-court outcome-signal series. Pending leads about shifting outcomes, never findings; not part of the public mirror.",
+		routes: ["/drift/ingest", "/drift/changepoints"],
+	},
+	{
+		name: "Structural capture",
+		crate: "vi-capture",
+		summary:
+			"Repeat-appearance concentration metrics against a seeded Monte Carlo null. Pending leads for counsel review, never findings; not part of the public mirror.",
+		routes: ["/capture/rebuild", "/capture/outliers"],
+	},
 ];

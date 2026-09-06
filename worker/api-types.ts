@@ -77,6 +77,22 @@ export interface LedgerVerifyResponse {
 	tip_hash: string | null;
 }
 
+export interface TransparencySnapshot {
+	id: string;
+	created_at: string;
+	/** Hex-encoded Merkle root over the published dataset. */
+	merkle_root: string;
+	tree_size: number;
+	table_counts: Record<string, number>;
+	prev_root: string | null;
+	/** Ledger sequence number the snapshot pinned at capture time. */
+	ledger_seq: number | null;
+}
+
+export interface TransparencySnapshotsResponse {
+	snapshots: TransparencySnapshot[];
+}
+
 export interface CaseHit {
 	case_id: string;
 	docket_number: string | null;
