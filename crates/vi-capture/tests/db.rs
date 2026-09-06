@@ -85,7 +85,7 @@ async fn rebuild_compute_outliers_round_trip() {
     )
     .bind(case_id)
     .bind(format!("capture-test-{n}"))
-    .execute(pool)
+    .execute(&pool)
     .await
     .unwrap();
     sqlx::query(
