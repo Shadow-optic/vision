@@ -65,7 +65,43 @@ async fn all_engines_wired_over_http() {
     assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let catalog = json_body(&body);
     assert_eq!(catalog["backend"], "vi-api");
-    assert_eq!(catalog["engines"].as_array().unwrap().len(), 14);
+
+    // Named rather than counted: a count says an engine is missing, a name
+    // says which one, and an engine dropping off this list silently is how a
+    // stage stops running without anyone noticing.
+    let listed: Vec<&str> = catalog["engines"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|e| e["crate"].as_str().unwrap())
+        .collect();
+    for expected in [
+        "vi-ledger",
+        "vi-api",
+        "vi-correlation",
+        "vi-tactics",
+        "vi-trustscript",
+        "vi-sim",
+        "vi-geo",
+        "vi-ingest",
+        "vi-pipeline",
+        "vi-lasm",
+        "vi-monell-atlas",
+        "vi-brady-recon",
+        "vi-trial-penalty",
+        "vi-constitution",
+        "vi-reckoning",
+    ] {
+        assert!(
+            listed.contains(&expected),
+            "{expected} missing from /engines"
+        );
+    }
+    assert_eq!(
+        listed.len(),
+        15,
+        "unexpected engine in /engines: {listed:?}"
+    );
 
     let (st, body) = send(app.clone(), "GET", "/tactics", None).await;
     assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
@@ -93,8 +129,11 @@ async fn all_engines_wired_over_http() {
     assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
     let ingest = json_body(&body);
     assert_eq!(ingest["source"], "fixture");
-    assert!(ingest["cases_persisted"].as_u64().unwrap() >= 1);
-    assert!(ingest["opinions_persisted"].as_u64().unwrap() >= 1);
+    // One request can name a family of feeds, so counts are per feed and
+    // totalled across them.
+    assert_eq!(ingest["runs"].as_array().unwrap().len(), 1);
+    assert!(ingest["totals"]["cases"].as_u64().unwrap() >= 1);
+    assert!(ingest["totals"]["opinions"].as_u64().unwrap() >= 1);
 
     let (st, body) = send(app.clone(), "GET", "/ingest/status", None).await;
     assert_eq!(st, StatusCode::OK);
