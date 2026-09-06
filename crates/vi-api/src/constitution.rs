@@ -169,3 +169,31 @@ pub async fn screen_report(
         None => Err(ApiError::not_found()),
     }
 }
+
+#[derive(Deserialize)]
+pub struct ScreenReviewBody {
+    /// `substantiate` or `reject`.
+    pub action: String,
+    pub notes: Option<String>,
+}
+
+/// Counsel review of a constitution screen — the same gate the atlas applies
+/// to findings. A screen is a machine-generated lead until this runs.
+pub async fn screen_review(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ScreenReviewBody>,
+) -> Result<Json<Value>, ApiError> {
+    let status = match body.action.as_str() {
+        "substantiate" => "substantiated",
+        "reject" => "rejected",
+        other => {
+            return Err(ApiError::bad_req(format!(
+                "unknown action '{other}'; expected 'substantiate' or 'reject'"
+            )))
+        }
+    };
+    vi_constitution::db::review_screen(&st.pool, &st.ledger, id, status, body.notes.as_deref())
+        .await?;
+    Ok(Json(json!({ "screen_id": id, "review_status": status })))
+}

@@ -5,6 +5,7 @@ edition = "2021"
 
 [dependencies]
 axum = { workspace = true }
+blake3 = { workspace = true }
 chrono = { workspace = true }
 dotenvy = { workspace = true }
 anyhow = { workspace = true }
@@ -31,6 +32,10 @@ vi-trial-penalty = { path = "../vi-trial-penalty" }
 vi-trustscript = { path = "../vi-trustscript" }
 vi-constitution = { path = "../vi-constitution" }
 vi-reckoning = { path = "../vi-reckoning" }
+vi-capture = { path = "../vi-capture" }
+vi-drift = { path = "../vi-drift" }
+vi-resonance = { path = "../vi-resonance" }
+vi-transparency = { path = "../vi-transparency" }
 
 [dev-dependencies]
 reqwest = { workspace = true }

@@ -17,6 +17,9 @@ impl ApiError {
     pub fn not_found() -> Self {
         Self(StatusCode::NOT_FOUND, "not found".into())
     }
+    pub fn conflict(m: impl Into<String>) -> Self {
+        Self(StatusCode::CONFLICT, m.into())
+    }
 }
 
 impl From<sqlx::Error> for ApiError {
@@ -101,8 +104,11 @@ impl From<vi_constitution::resolve::ResolveError> for ApiError {
 impl From<vi_constitution::db::Error> for ApiError {
     fn from(e: vi_constitution::db::Error) -> Self {
         match e {
-            vi_constitution::db::Error::NotFound => Self::not_found(),
+            vi_constitution::db::Error::NotFound | vi_constitution::db::Error::ScreenNotFound => {
+                Self::not_found()
+            }
             vi_constitution::db::Error::UnknownJurisdiction(s) => Self::bad_req(s),
+            vi_constitution::db::Error::InvalidStatus(s) => Self::bad_req(s),
             vi_constitution::db::Error::Render(r) => Self::internal(r),
             other => Self::internal(other),
         }
@@ -118,6 +124,7 @@ impl From<vi_reckoning::Error> for ApiError {
             | vi_reckoning::Error::InsufficientEvidence
             | vi_reckoning::Error::PublicationBlocked => Self::bad_req(e.to_string()),
             vi_reckoning::Error::NotFound => Self::not_found(),
+            vi_reckoning::Error::InvalidTransition(m) => Self::conflict(m),
             other => Self::internal(other),
         }
     }
@@ -125,7 +132,44 @@ impl From<vi_reckoning::Error> for ApiError {
 impl From<vi_pipeline::Error> for ApiError {
     fn from(e: vi_pipeline::Error) -> Self {
         match e {
-            vi_pipeline::Error::NotFound => Self::not_found(),
+            vi_pipeline::Error::NotFound
+            | vi_pipeline::Error::FlagNotFound
+            | vi_pipeline::Error::UnresolvedNotFound => Self::not_found(),
+            vi_pipeline::Error::InvalidStatus(s) | vi_pipeline::Error::InvalidResolution(s) => {
+                Self::bad_req(s)
+            }
+            vi_pipeline::Error::AlreadyResolved => {
+                Self::conflict("unresolved-officials entry is already resolved")
+            }
+            other => Self::internal(other),
+        }
+    }
+}
+impl From<vi_transparency::Error> for ApiError {
+    fn from(e: vi_transparency::Error) -> Self {
+        match e {
+            vi_transparency::Error::EmptyTree => Self::conflict(e.to_string()),
+            other => Self::internal(other),
+        }
+    }
+}
+impl From<vi_resonance::Error> for ApiError {
+    fn from(e: vi_resonance::Error) -> Self {
+        Self::internal(e)
+    }
+}
+impl From<vi_drift::Error> for ApiError {
+    fn from(e: vi_drift::Error) -> Self {
+        match e {
+            vi_drift::Error::InvalidParameter(m) => Self::bad_req(m),
+            other => Self::internal(other),
+        }
+    }
+}
+impl From<vi_capture::Error> for ApiError {
+    fn from(e: vi_capture::Error) -> Self {
+        match e {
+            vi_capture::Error::TooFewPermutations(_) => Self::bad_req(e.to_string()),
             other => Self::internal(other),
         }
     }
