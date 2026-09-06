@@ -1,14 +1,16 @@
 /**
  * Client for the Rust `vi-api` service.
  *
- * Three failure modes are distinguished on purpose, because a public
- * accountability register must never blur them: the backend is not connected
- * in this environment, the backend is unreachable/erroring, or the record
- * genuinely does not exist (or is under a counsel hold, which is a 404 by
- * design). Results are cached briefly in the Cloudflare cache; nothing is
+ * Failure modes are distinguished on purpose, because a public
+ * accountability register must never blur them: the backend is unreachable
+ * or erroring, or the record genuinely does not exist (or is under a counsel
+ * hold, which is a 404 by design). When `VI_API_ORIGIN` is unset the Worker
+ * serves the public-read API itself rather than pretending the site has no
+ * data path. Results are cached briefly in the Cloudflare cache; nothing is
  * ever synthesized.
  */
 import type { SiteConfig } from "./env";
+import { edgeGet } from "./edge-api";
 
 export type Fetched<T> =
 	| { state: "ok"; data: T; cached: boolean }
@@ -26,7 +28,7 @@ export interface FetchOptions {
 const DEFAULT_TIMEOUT_MS = 6000;
 
 export function isConfigured(cfg: SiteConfig): boolean {
-	return cfg.apiOrigin !== null;
+	return cfg.apiOrigin !== null || cfg.edgeApi;
 }
 
 export function upstreamUrl(cfg: SiteConfig, path: string): string | null {
@@ -40,6 +42,7 @@ export async function requestUpstream(
 	path: string,
 	timeoutMs = DEFAULT_TIMEOUT_MS,
 ): Promise<Response | null> {
+	if (!cfg.apiOrigin && cfg.edgeApi) return edgeGet(path);
 	const url = upstreamUrl(cfg, path);
 	if (!url) return null;
 	const headers: Record<string, string> = { accept: "application/json" };
@@ -64,8 +67,7 @@ export async function getJson<T>(
 	path: string,
 	opts: FetchOptions = {},
 ): Promise<Fetched<T>> {
-	const url = upstreamUrl(cfg, path);
-	if (!url) return { state: "unconfigured" };
+	if (!cfg.apiOrigin && !cfg.edgeApi) return { state: "unconfigured" };
 
 	const ttl = opts.ttl ?? 30;
 	const cacheKey = new Request(`https://cache.visioninjustice.internal${path}`, {
@@ -134,6 +136,15 @@ export interface UpstreamHealth {
 }
 
 export async function health(cfg: SiteConfig): Promise<UpstreamHealth> {
+	if (!cfg.apiOrigin && cfg.edgeApi) {
+		return {
+			configured: true,
+			reachable: true,
+			status: 200,
+			latencyMs: 0,
+			detail: null,
+		};
+	}
 	if (!cfg.apiOrigin) {
 		return {
 			configured: false,
