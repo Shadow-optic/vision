@@ -21,6 +21,7 @@ import { doctrine, corrections } from "./pages/doctrine";
 import { statutes, immunity } from "./pages/statutes";
 import { engines, statusPage } from "./pages/engines";
 import { tracker, ledger } from "./pages/tracker";
+import { transparency } from "./pages/transparency";
 import { cases } from "./pages/cases";
 import { sources } from "./pages/sources";
 import { apiDocs } from "./pages/api";
@@ -38,6 +39,7 @@ const PUBLIC_PAGES = [
 	"/doctrine",
 	"/corrections",
 	"/ledger",
+	"/transparency",
 	"/api",
 ];
 
@@ -53,6 +55,7 @@ const router = new Router<Ctx>()
 	.get("/status", (ctx) => statusPage(ctx))
 	.get("/tracker", (ctx) => tracker(ctx))
 	.get("/ledger", (ctx) => ledger(ctx))
+	.get("/transparency", (ctx) => transparency(ctx))
 	.get("/cases", (ctx) => cases(ctx))
 	.get("/sources", (ctx) => sources(ctx))
 	.get("/api", (ctx) => apiDocs(ctx))

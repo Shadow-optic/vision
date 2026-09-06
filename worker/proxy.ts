@@ -120,7 +120,12 @@ export const ALLOWED: AllowedRoute[] = [
 		ttl: 300,
 		summary: "Municipal-liability report for an office.",
 	},
-	{ pattern: "/stats/plea-sentence", ttl: 300, summary: "Plea-rate to sentence-length correlation." },
+	{
+		pattern: "/stats/plea-sentence",
+		params: ["office", "jurisdiction"],
+		ttl: 300,
+		summary: "Plea-rate to sentence-length correlation.",
+	},
 	{ pattern: "/geo/cells/:cell", ttl: 300, summary: "Aggregates for one H3 cell." },
 	{
 		pattern: "/geo/kring/:cell",
@@ -129,6 +134,21 @@ export const ALLOWED: AllowedRoute[] = [
 		summary: "Aggregates across a k-ring of H3 cells.",
 	},
 	{ pattern: "/ingest/status", ttl: 60, summary: "Ingest cursors and last-run status." },
+	{
+		pattern: "/transparency/snapshots",
+		ttl: 60,
+		summary: "Transparency proof log: every snapshot of the published dataset.",
+	},
+	{
+		pattern: "/transparency/snapshots/latest",
+		ttl: 60,
+		summary: "Latest snapshot: Merkle root, tree size, per-table counts, pinned ledger tip.",
+	},
+	{
+		pattern: "/transparency/proof/:table/:row_id",
+		ttl: 300,
+		summary: "Inclusion proof that a published row was part of a snapshot.",
+	},
 	{
 		pattern: "/ingest/sources",
 		ttl: 60,
@@ -176,6 +196,21 @@ export const WITHHELD: { path: string; reason: string }[] = [
 		path: "/pipeline/unresolved-officials",
 		reason:
 			"Quotes the raw judge field of an identifiable case while the platform has declined to say which individuals it names. The open count appears on /sources instead.",
+	},
+	{
+		path: "/resonance/cases, /resonance/case/:id",
+		reason:
+			"Pending machine-derived lead scores. Publishing a sub-threshold composite score against an identifiable case is exactly what the pending-only doctrine forbids.",
+	},
+	{
+		path: "/drift/changepoints",
+		reason:
+			"Pending machine-derived doctrinal-drift candidates. A changepoint is a lead for counsel, not a finding.",
+	},
+	{
+		path: "/capture/outliers",
+		reason:
+			"Pending machine-derived concentration metrics against named judges and offices. A low p-value means 'worth review', never 'captured'.",
 	},
 	{
 		path: "All POST routes",

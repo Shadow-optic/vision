@@ -18,6 +18,7 @@ const FOOTER_LINKS: { href: string; label: string }[] = [
 	{ href: "/corrections", label: "Corrections & privacy holds" },
 	{ href: "/sources", label: "Sources & provenance" },
 	{ href: "/ledger", label: "Root Ledger" },
+	{ href: "/transparency", label: "Transparency log" },
 	{ href: "/api", label: "Public API" },
 	{ href: "/healthz", label: "Status" },
 ];
