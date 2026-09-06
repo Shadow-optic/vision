@@ -46,6 +46,9 @@ pub fn router(state: AppState) -> Router {
         .route("/tactics/:id/stats", get(handlers::tactic_stats))
         .route("/ingest/run", post(handlers::ingest_run))
         .route("/ingest/status", get(handlers::ingest_status))
+        .route("/ingest/sources", get(handlers::ingest_sources))
+        .route("/pipeline/run", post(handlers::pipeline_run))
+        .route("/pipeline/status", get(handlers::pipeline_status))
         .route("/atlas/findings", post(handlers::atlas_create_finding))
         .route(
             "/atlas/findings/:id/review",

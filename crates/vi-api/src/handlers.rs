@@ -317,69 +317,9 @@ pub async fn run_rules(
     State(st): State<AppState>,
     Json(body): Json<RunRules>,
 ) -> Result<Json<Value>, ApiError> {
-    let ctx = vi_db::case_context(&st.pool, body.case_id)
-        .await?
-        .ok_or_else(ApiError::not_found)?;
-
-    let rows = sqlx::query_as::<_, (Uuid, String)>(
-        "SELECT rule_id, source FROM abuse_rules WHERE enabled",
-    )
-    .fetch_all(&st.pool)
-    .await?;
-
-    let prosecutor_id = ctx
-        .pointer("/case/prosecutor_id")
-        .and_then(Value::as_str)
-        .and_then(|s| Uuid::parse_str(s).ok());
-    let office = ctx
-        .pointer("/case/office")
-        .and_then(Value::as_str)
-        .map(str::to_string);
-
-    let mut fired = Vec::new();
-    for (rule_id, src) in rows {
-        let Ok(rule) = vi_trustscript::parse_rule(&src) else {
-            continue;
-        };
-        let Some(flag) = vi_trustscript::evaluate(&rule, &ctx) else {
-            continue;
-        };
-
-        let flag_id = sqlx::query_scalar::<_, Uuid>(
-            "INSERT INTO abuse_flags
-               (case_id, rule_id, prosecutor_id, office, label, severity, explanation)
-             VALUES ($1,$2,$3,$4,$5,$6,$7) RETURNING flag_id",
-        )
-        .bind(body.case_id)
-        .bind(rule_id)
-        .bind(prosecutor_id)
-        .bind(&office)
-        .bind(&flag.label)
-        .bind(format!("{:?}", flag.severity).to_lowercase())
-        .bind(json!(flag.matched))
-        .fetch_one(&st.pool)
-        .await?;
-
-        st.ledger
-            .append(
-                events::ABUSE_FLAG,
-                &json!({
-                    "flag_id": flag_id,
-                    "case_id": body.case_id,
-                    "rule_id": rule_id,
-                    "label": flag.label,
-                    "explanation_hash": vi_ledger::hash_payload(&json!(flag.matched)),
-                }),
-            )
-            .await?;
-        fired.push(json!({
-            "flag_id": flag_id,
-            "label": flag.label,
-            "severity": flag.severity,
-            "matched": flag.matched,
-            "review_status": "pending"
-        }));
-    }
+    // Same code path the ingestion pipeline uses, so an operator's request and
+    // a scheduled cycle can never drift apart.
+    let fired = vi_pipeline::run_rules_for_case(&st.pool, &st.ledger, body.case_id).await?;
     Ok(Json(json!({ "case_id": body.case_id, "flags": fired })))
 }
 
@@ -1056,13 +996,56 @@ pub async fn ingest_run(
     State(st): State<AppState>,
     Json(body): Json<IngestRun>,
 ) -> Result<Json<Value>, ApiError> {
-    let report = vi_ingest::run_named(&st.pool, &st.ledger, &body.source).await?;
-    Ok(Json(json!(report)))
+    let runs = vi_ingest::run_named(&st.pool, &st.ledger, &body.source).await?;
+    Ok(Json(json!({
+        "source": body.source,
+        "runs": runs,
+        "totals": {
+            "cases": runs.iter().map(|r| r.cases_persisted).sum::<u64>(),
+            "opinions": runs.iter().map(|r| r.opinions_persisted).sum::<u64>(),
+            "courts": runs.iter().map(|r| r.courts_persisted).sum::<u64>(),
+            "skipped": runs.iter().map(|r| r.skipped).sum::<u64>(),
+        },
+    })))
 }
 
 pub async fn ingest_status(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
     let cursors = vi_ingest::list_cursors(&st.pool).await?;
     Ok(Json(json!({ "cursors": cursors })))
+}
+
+/// The feeds this deployment reads, whether each one has ever polled, and what
+/// ingestion refused to store.
+pub async fn ingest_sources(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(vi_ingest::list_sources(&st.pool).await?))
+}
+
+#[derive(Deserialize)]
+pub struct PipelineRun {
+    /// One case, or every case still awaiting the pipeline.
+    pub case_id: Option<Uuid>,
+    pub limit: Option<i64>,
+}
+
+/// Walk ingested records through every engine. Produces pending artifacts only.
+pub async fn pipeline_run(
+    State(st): State<AppState>,
+    Json(body): Json<PipelineRun>,
+) -> Result<Json<Value>, ApiError> {
+    let summary = match body.case_id {
+        Some(case_id) => {
+            vi_pipeline::run_cases(&st.pool, &st.ledger, &[case_id], "operator").await?
+        }
+        None => {
+            let limit = body.limit.unwrap_or(200).clamp(1, 2000);
+            vi_pipeline::run_pending(&st.pool, &st.ledger, limit, "operator").await?
+        }
+    };
+    Ok(Json(json!(summary)))
+}
+
+pub async fn pipeline_status(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(vi_pipeline::status(&st.pool).await?))
 }
 
 // ---------- Engine catalog ----------
@@ -1100,6 +1083,9 @@ pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError
     let actors: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM accountability_actors")
         .fetch_one(&st.pool)
         .await?;
+    let pipeline_runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pipeline_runs")
+        .fetch_one(&st.pool)
+        .await?;
 
     Ok(Json(json!({
         "backend": "vi-api",
@@ -1120,7 +1106,9 @@ pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError
             {"name": "H3 intelligence", "crate": "vi-geo", "rows": h3,
              "routes": ["/geo/cells/:cell", "/geo/kring/:cell"]},
             {"name": "Telemetry / ingest", "crate": "vi-ingest", "rows": cases,
-             "routes": ["/ingest/run", "/ingest/status"]},
+             "routes": ["/ingest/run", "/ingest/status", "/ingest/sources"]},
+            {"name": "Post-ingest pipeline", "crate": "vi-pipeline", "rows": pipeline_runs,
+             "routes": ["/pipeline/run", "/pipeline/status"]},
             {"name": "JIT LASM", "crate": "vi-lasm", "rows": cases,
              "routes": ["/lasm/package/:case_id"]},
             {"name": "Monell atlas", "crate": "vi-monell-atlas", "rows": findings,

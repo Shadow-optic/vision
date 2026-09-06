@@ -122,6 +122,14 @@ impl From<vi_reckoning::Error> for ApiError {
         }
     }
 }
+impl From<vi_pipeline::Error> for ApiError {
+    fn from(e: vi_pipeline::Error) -> Self {
+        match e {
+            vi_pipeline::Error::NotFound => Self::not_found(),
+            other => Self::internal(other),
+        }
+    }
+}
 impl From<serde_json::Error> for ApiError {
     fn from(e: serde_json::Error) -> Self {
         Self::bad_req(e.to_string())
