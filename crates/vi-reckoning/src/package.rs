@@ -164,7 +164,8 @@ pub async fn generate(
         .into_iter()
         .map(|e| crate::report::LedgerRef {
             seq: e.seq,
-            event_type: e.event_type,
+            event_type: e.event_ty
+pe,
             entry_hash: e.entry_hash,
         })
         .collect();
@@ -301,8 +302,7 @@ pub async fn transition(
     Ok(pkg)
 }
 
-pub async fn get_package(pool: &PgPool, package_id: Uuid) -> Result<StoredPackage, Error> {
-    sqlx::query_as::<_, StoredPackage>(
+pub async fn get_package(pool: &PgPool, package_id: Uuid) -> Result<StoredPackage, Error> {    sqlx::query_as::<_, StoredPackage>(
         "SELECT package_id, actor_id, action_kind, status, body_markdown, document_hash
          FROM legal_action_packages WHERE package_id = $1",
     )
