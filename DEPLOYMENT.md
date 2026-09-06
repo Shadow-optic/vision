@@ -46,10 +46,16 @@ npx wrangler deploy --temporary --config wrangler.preview.json
 
 ## 2. Point the Worker at the backend
 
-Until `VI_API_ORIGIN` is set, every live panel renders its "not connected"
-state and `/api/*` answers `503 backend_not_connected`. The doctrine, statute,
-immunity, and API-documentation pages are complete without it, because that
-content ships inside the Worker.
+Until `VI_API_ORIGIN` is set, the Worker serves the public-read API itself:
+live CourtListener opinion search, the configured feed list, engine catalog,
+and an empty Wall of Injustice. An empty register is honest — no official is
+named until licensed counsel substantiates a finding on `vi-api`. Doctrine,
+statute, immunity, and API-documentation pages have always been complete
+without a backend, because that content ships inside the Worker.
+
+Set `VI_API_ORIGIN` when the counsel-facing `vi-api` is published, so the
+Wall, ledger, and stored ingest cursors come from the database rather than
+the edge public-read path.
 
 ```bash
 # permanent, in wrangler.jsonc

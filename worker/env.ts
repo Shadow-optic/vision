@@ -25,6 +25,12 @@ export interface SiteConfig {
 	/** Normalized backend origin without a trailing slash, or null when unset. */
 	apiOrigin: string | null;
 	apiToken: string | null;
+	/**
+	 * When no `VI_API_ORIGIN` is set, the Worker serves the public-read API
+	 * itself (live CourtListener search, empty register). Distinct from an
+	 * outage: the site is connected, just not to a separate `vi-api`.
+	 */
+	edgeApi: boolean;
 }
 
 /** A backend origin is only accepted over HTTPS (or localhost for `wrangler dev`). */
@@ -48,11 +54,13 @@ function normalizeOrigin(raw: string | undefined): string | null {
 }
 
 export function config(env: Env): SiteConfig {
+	const apiOrigin = normalizeOrigin(env.VI_API_ORIGIN);
 	return {
 		siteName: env.SITE_NAME?.trim() || "VisionInjustice",
 		contactEmail: env.CONTACT_EMAIL?.trim() || "counsel@visioninjustice.org",
 		environment: env.ENVIRONMENT?.trim() || "production",
-		apiOrigin: normalizeOrigin(env.VI_API_ORIGIN),
+		apiOrigin,
 		apiToken: env.VI_API_TOKEN?.trim() || null,
+		edgeApi: apiOrigin === null,
 	};
 }

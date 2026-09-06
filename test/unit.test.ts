@@ -4,6 +4,7 @@ import { Router, isUuid } from "../worker/router";
 import { ALLOWED, WITHHELD, buildUpstreamPath, matchAllowed } from "../worker/proxy";
 import { config } from "../worker/env";
 import { STATUTES, IMMUNITY, authorizesLife } from "../worker/data/catalog";
+import { edgeGet, EDGE_EXCLUSIONS, EDGE_FEEDS } from "../worker/edge-api";
 
 describe("html escaping", () => {
 	it("escapes every interpolated value", () => {
@@ -114,9 +115,11 @@ describe("public api allowlist", () => {
 describe("configuration", () => {
 	it("requires https for a backend origin", () => {
 		expect(config({ VI_API_ORIGIN: "https://api.test" }).apiOrigin).toBe("https://api.test");
+		expect(config({ VI_API_ORIGIN: "https://api.test" }).edgeApi).toBe(false);
 		expect(config({ VI_API_ORIGIN: "http://api.test" }).apiOrigin).toBeNull();
 		expect(config({ VI_API_ORIGIN: "not a url" }).apiOrigin).toBeNull();
 		expect(config({}).apiOrigin).toBeNull();
+		expect(config({}).edgeApi).toBe(true);
 	});
 
 	it("allows plain http on localhost for local development", () => {
@@ -150,5 +153,39 @@ describe("statute catalog generated from the rust crate", () => {
 	it("keeps the recognized limits on every immunity doctrine", () => {
 		expect(IMMUNITY.length).toBeGreaterThanOrEqual(3);
 		expect(IMMUNITY.every((n) => n.recognized_limits.length > 20)).toBe(true);
+	});
+});
+
+describe("edge public-read API", () => {
+	it("connects the register without inventing an official", async () => {
+		const res = await edgeGet("/reckoning/wall");
+		expect(res.status).toBe(200);
+		const wall = (await res.json()) as { charges: boolean; entries: unknown[] };
+		expect(wall.charges).toBe(false);
+		expect(wall.entries).toEqual([]);
+	});
+
+	it("lists every engine and the feeds the deployment reads", async () => {
+		const engines = (await (await edgeGet("/engines")).json()) as {
+			backend: string;
+			engines: { crate: string }[];
+		};
+		expect(engines.backend).toBe("vision-edge");
+		expect(engines.engines.length).toBe(15);
+
+		const sources = (await (await edgeGet("/ingest/sources")).json()) as {
+			sources: { source: string }[];
+			exclusions: string[];
+		};
+		expect(sources.sources.map((s) => s.source)).toEqual(EDGE_FEEDS.map((f) => f.source));
+		expect(sources.exclusions).toEqual(EDGE_EXCLUSIONS);
+	});
+
+	it("does not call CourtListener for an empty search", async () => {
+		const res = await edgeGet("/cases/search?q=");
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { results: unknown[]; caveat: string };
+		expect(body.results).toEqual([]);
+		expect(body.caveat).toMatch(/Enter a query/i);
 	});
 });
