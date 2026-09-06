@@ -85,8 +85,22 @@ export interface CaseHit {
 	citation: string | null;
 	date_issued: string | null;
 	rank: number | null;
+	/** `full`, or `snippet`/`summary` for a partial extract from a feed. */
+	text_completeness?: string | null;
+	source_url?: string | null;
+	matched_on?: string | null;
+}
+
+/** How much of the stored corpus is complete opinion text. */
+export interface SearchCorpus {
+	opinions: number;
+	full_text: number;
+	partial_text: number;
+	median_chars: number;
 }
 
 export interface SearchResponse {
 	results: CaseHit[];
+	corpus?: SearchCorpus;
+	caveat?: string;
 }

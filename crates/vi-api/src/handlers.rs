@@ -81,19 +81,67 @@ pub async fn search(
              'case_id', c.case_id, 'docket_number', c.docket_number,
              'jurisdiction', c.jurisdiction, 'outcome', c.outcome,
              'citation', o.citation, 'date_issued', o.date_issued,
+             'text_completeness', o.text_completeness,
+             'source_url', COALESCE(o.source_url, c.source_url),
+             'matched_on', CASE WHEN o.tsv @@ query THEN 'opinion_text'
+                                ELSE 'docket_or_citation' END,
              'rank', ts_rank(o.tsv, query))
            FROM court_opinions o
            JOIN court_cases c USING (case_id),
                 websearch_to_tsquery('english', $1) query
            WHERE o.tsv @@ query
-           ORDER BY ts_rank(o.tsv, query) DESC
+              -- A docket number or citation is not prose, so the tsvector will
+              -- not match it. Someone searching "25A-CR-00052" is searching for
+              -- a case, and should find it.
+              OR c.docket_number ILIKE '%' || $1 || '%'
+              OR o.citation ILIKE '%' || $1 || '%'
+           ORDER BY ts_rank(o.tsv, query) DESC, c.docket_number
            LIMIT $2"#,
     )
     .bind(&q.q)
     .bind(limit)
     .fetch_all(&st.pool)
     .await?;
-    Ok(Json(json!({ "results": rows })))
+
+    // How much of the corpus is actually searchable prose.
+    //
+    // Without a CourtListener token the public feeds return a few hundred
+    // characters of an opinion, and those characters are usually the caption
+    // page. Searching that for "brady" finds nothing — including in cases the
+    // feed surfaced *because* they discuss Brady. Reporting a bare empty result
+    // would invite the reader to conclude no such case exists, so the shape of
+    // the corpus travels with the answer.
+    let corpus = sqlx::query_scalar::<_, Value>(
+        "SELECT jsonb_build_object(
+                  'opinions', COUNT(*),
+                  'full_text', COUNT(*) FILTER (WHERE text_completeness = 'full'),
+                  'partial_text', COUNT(*) FILTER (WHERE text_completeness <> 'full'),
+                  'median_chars', COALESCE(
+                      percentile_disc(0.5) WITHIN GROUP (ORDER BY length(full_text)), 0))
+           FROM court_opinions",
+    )
+    .fetch_one(&st.pool)
+    .await?;
+
+    let partial = corpus
+        .get("partial_text")
+        .and_then(Value::as_i64)
+        .unwrap_or(0);
+    let total = corpus.get("opinions").and_then(Value::as_i64).unwrap_or(0);
+    let mostly_partial = total > 0 && partial * 2 > total;
+
+    Ok(Json(json!({
+        "results": rows,
+        "corpus": corpus,
+        "caveat": if mostly_partial {
+            "Most stored opinions are partial extracts from public feeds, not complete \
+             texts. A term that does not appear may still appear in the full opinion: \
+             this searches what was published to the feed, not the court's whole record. \
+             An empty result is not evidence that no such case exists."
+        } else {
+            "Search runs over stored opinion text. A result is a document, not a finding."
+        },
+    })))
 }
 
 pub async fn case_context(

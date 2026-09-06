@@ -1,4 +1,4 @@
-/** The fourteen engines, described for the public site. Row counts come from `GET /engines`. */
+/** The engines, described for the public site. Row counts come from `GET /engines`. */
 export interface EngineDescriptor {
 	name: string;
 	crate: string;
@@ -60,8 +60,15 @@ export const ENGINES: EngineDescriptor[] = [
 		name: "Telemetry / ingest",
 		crate: "vi-ingest",
 		summary:
-			"CourtListener and fixture ingestion with cursor checkpoints and API-triggered polling.",
-		routes: ["/ingest/run", "/ingest/status"],
+			"Live public feeds — courts registry, search, and per-court Atom — with cursor checkpoints. Where a feed publishes only an extract of an opinion, the record says so rather than presenting it as the whole text.",
+		routes: ["/ingest/run", "/ingest/status", "/ingest/sources"],
+	},
+	{
+		name: "Post-ingest pipeline",
+		crate: "vi-pipeline",
+		summary:
+			"Walks each ingested record through forum resolution, constitutional screening, evidence-lead reconciliation, abuse rules, individual linkage, and scoring. Every artifact it produces is pending; it publishes nothing.",
+		routes: ["/pipeline/run", "/pipeline/status", "/pipeline/unresolved-officials"],
 	},
 	{
 		name: "JIT LASM",

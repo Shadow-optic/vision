@@ -1,5 +1,6 @@
 import { SELF } from "cloudflare:test";
 import { describe, expect, it } from "vitest";
+import { ENGINES } from "../worker/data/engines";
 import { ACTOR_ID, HELD_ACTOR_ID, LEDGER } from "./fixtures";
 import { SITE, body, get, normalize } from "./helpers";
 
@@ -124,9 +125,17 @@ describe("doctrine and reference pages", () => {
 describe("engine, tracker, ledger and search pages", () => {
 	it("merges live row counts into the engine catalog", async () => {
 		const page = await body("/engines");
-		expect(page).toContain("Fourteen engines");
+		// Derived from the catalog: a hard-coded count silently goes stale the
+		// next time an engine is added.
+		expect(page).toContain(`${ENGINES.length} engines`);
 		expect(page).toContain("12 rows");
 		expect(page).toContain("Backend online");
+	});
+
+	it("names the post-ingest pipeline and what it may not do", async () => {
+		const page = await body("/engines");
+		expect(page).toContain("vi-pipeline");
+		expect(page).toContain("it publishes nothing");
 	});
 
 	it("lists referred packages as drafts", async () => {
@@ -145,6 +154,27 @@ describe("engine, tracker, ledger and search pages", () => {
 		const page = await body("/cases?q=brady");
 		expect(page).toContain("People v. Demo");
 		expect(page).toContain("CR-2019-0001");
+	});
+
+	it("labels stored text that is only an extract", async () => {
+		const page = await body("/cases?q=brady");
+		expect(page).toContain("snippet");
+		expect(page).toContain("badge-partial");
+	});
+
+	it("warns that a nil result over partial text proves nothing", async () => {
+		// The anonymous feeds return a few hundred characters of caption page, so
+		// a bare "no match" would invite the reader to conclude the case does not
+		// exist. The corpus shape has to travel with the answer.
+		const page = await body("/cases?q=nothingmatchesthis");
+		expect(page).toContain("This searched partial text");
+		expect(page).toContain("88 of 89");
+		expect(page).toContain("not evidence that no such case exists");
+	});
+
+	it("drops the warning once the corpus is complete text", async () => {
+		const page = await body("/cases?q=complete");
+		expect(page).not.toContain("This searched partial text");
 	});
 });
 

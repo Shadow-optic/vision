@@ -211,6 +211,8 @@ p { margin: 0 0 1rem; }
 .badge-criminal { border-color: #6a2530; background: #241014; color: #ffb3bf; }
 .badge-civil { border-color: #2c4a6b; background: #101a24; color: #a9cdf5; }
 .badge-life { border-color: #7a5a20; background: #241c0f; color: var(--gold); }
+/* Stored text that is an extract, not the court's whole opinion. */
+.badge-partial { border-color: #6a5320; background: #241f0f; color: #e8cd8a; }
 
 .notice {
   border: 1px solid var(--line);

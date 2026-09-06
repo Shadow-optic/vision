@@ -102,6 +102,20 @@ export const SEARCH = {
 			citation: "People v. Demo, 1 Cal.App.5th 1 (2019)",
 			date_issued: "2019-04-02",
 			rank: 0.42,
+			text_completeness: "snippet",
+			source_url: "https://courts.example/opinion/1",
+			matched_on: "opinion_text",
 		},
 	],
+	// A corpus that is mostly extracts, which is what the anonymous public
+	// feeds actually produce.
+	corpus: { opinions: 89, full_text: 1, partial_text: 88, median_chars: 456 },
+	caveat: "Most stored opinions are partial extracts from public feeds.",
+};
+
+/** A corpus of complete opinions: the partial-text warning must not appear. */
+export const SEARCH_FULL_CORPUS = {
+	results: [],
+	corpus: { opinions: 40, full_text: 40, partial_text: 0, median_chars: 24000 },
+	caveat: "Search runs over stored opinion text.",
 };
