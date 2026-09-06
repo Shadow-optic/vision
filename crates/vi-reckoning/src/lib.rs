@@ -20,6 +20,24 @@ pub mod statutes;
 
 use thiserror::Error;
 
+/// When does a finding or flag concern a particular individual?
+///
+/// Either counsel attached it to that individual directly (`actor_id`), or it
+/// names the prosecutor record that individual resolves to. Without the first
+/// arm, only officials who happen to exist in the seeded `prosecutors` table
+/// could ever accumulate a record — and a judge named in a live opinion could
+/// abuse their office indefinitely without the engine being able to say so.
+///
+/// Two spellings of the same rule: one for queries that bind the individual
+/// (`$1` actor id, `$2` prosecutor id), one for queries that join
+/// `accountability_actors a`.
+pub(crate) const FINDING_MATCHES_ACTOR_PARAMS: &str = "(f.actor_id = $1
+       OR (f.actor_id IS NULL AND $2::uuid IS NOT NULL AND f.prosecutor_id = $2))";
+
+pub(crate) const FINDING_MATCHES_ACTOR_ROW: &str = "(f.actor_id = a.actor_id
+       OR (f.actor_id IS NULL AND a.prosecutor_id IS NOT NULL
+           AND f.prosecutor_id = a.prosecutor_id))";
+
 #[derive(Debug, Error)]
 pub enum Error {
     #[error("sqlx: {0}")]
