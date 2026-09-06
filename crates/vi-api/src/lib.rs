@@ -45,6 +45,7 @@ pub fn router(state: AppState) -> Router {
         .route("/tactics/:id", get(handlers::get_tactic))
         .route("/tactics/:id/stats", get(handlers::tactic_stats))
         .route("/ingest/run", post(handlers::ingest_run))
+        .route("/ingest/cycle", post(handlers::ingest_cycle))
         .route("/ingest/status", get(handlers::ingest_status))
         .route("/ingest/sources", get(handlers::ingest_sources))
         .route("/ingest/place-courts", post(handlers::ingest_place_courts))

@@ -1038,12 +1038,43 @@ pub async fn tactic_stats(
 #[derive(Deserialize)]
 pub struct IngestRun {
     pub source: String,
+    /// When true, this request is one live-ingestion cycle: poll, place
+    /// unplaced courts, then walk new records through the engines.
+    #[serde(default)]
+    pub cycle: bool,
+    #[serde(default)]
+    pub place_courts: Option<bool>,
+    #[serde(default)]
+    pub pipeline: Option<bool>,
+    #[serde(default)]
+    pub pipeline_limit: Option<i64>,
+    #[serde(default)]
+    pub declare: Option<bool>,
+}
+
+fn cycle_request(source: &str, body: &IngestRun) -> vi_ingest::CycleRequest {
+    let live = vi_ingest::CycleRequest::live();
+    vi_ingest::CycleRequest {
+        source: source.to_string(),
+        place_courts: body.place_courts.unwrap_or(true),
+        pipeline: body.pipeline.unwrap_or(live.pipeline),
+        pipeline_limit: body.pipeline_limit.unwrap_or(live.pipeline_limit),
+        // A one-off poll must not redefine what the deployment reads. Only an
+        // explicit declare, or a `configured` cycle, publishes the feed list.
+        declare: body.declare.unwrap_or(body.cycle && source == "configured"),
+        trigger: if body.cycle { "operator" } else { "ingest" }.into(),
+    }
 }
 
 pub async fn ingest_run(
     State(st): State<AppState>,
     Json(body): Json<IngestRun>,
 ) -> Result<Json<Value>, ApiError> {
+    if body.cycle || body.place_courts.is_some() || body.pipeline.is_some() {
+        let report =
+            vi_ingest::run_cycle(&st.pool, &st.ledger, &cycle_request(&body.source, &body)).await?;
+        return Ok(Json(json!(report)));
+    }
     let runs = vi_ingest::run_named(&st.pool, &st.ledger, &body.source).await?;
     Ok(Json(json!({
         "source": body.source,
@@ -1055,6 +1086,65 @@ pub async fn ingest_run(
             "skipped": runs.iter().map(|r| r.skipped).sum::<u64>(),
         },
     })))
+}
+
+/// Start one live-ingestion cycle against the configured feeds (or a named
+/// source). Polls, places unplaced courts, then runs the post-ingest engines.
+///
+/// This is the operator-facing entry point that matches what `vi-ingest`
+/// does on each scheduler tick. Publication is still a separate counsel act.
+pub async fn ingest_cycle(
+    State(st): State<AppState>,
+    Json(body): Json<IngestCycle>,
+) -> Result<Json<Value>, ApiError> {
+    let mut req = vi_ingest::CycleRequest::live();
+    req.source = body.source;
+    req.place_courts = body.place_courts;
+    if let Some(pipeline) = body.pipeline {
+        req.pipeline = pipeline;
+    }
+    if let Some(limit) = body.pipeline_limit {
+        req.pipeline_limit = limit;
+    }
+    if let Some(declare) = body.declare {
+        req.declare = declare;
+    } else {
+        req.declare = req.source == "configured";
+    }
+    req.trigger = "operator".into();
+    let report = vi_ingest::run_cycle(&st.pool, &st.ledger, &req).await?;
+    Ok(Json(json!(report)))
+}
+
+#[derive(Deserialize)]
+pub struct IngestCycle {
+    #[serde(default = "default_cycle_source")]
+    pub source: String,
+    #[serde(default = "default_true")]
+    pub place_courts: bool,
+    pub pipeline: Option<bool>,
+    pub pipeline_limit: Option<i64>,
+    pub declare: Option<bool>,
+}
+
+impl Default for IngestCycle {
+    fn default() -> Self {
+        Self {
+            source: default_cycle_source(),
+            place_courts: true,
+            pipeline: None,
+            pipeline_limit: None,
+            declare: None,
+        }
+    }
+}
+
+fn default_cycle_source() -> String {
+    "configured".into()
+}
+
+fn default_true() -> bool {
+    true
 }
 
 pub async fn ingest_status(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
@@ -1175,9 +1265,9 @@ pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError
             {"name": "H3 intelligence", "crate": "vi-geo", "rows": h3,
              "routes": ["/geo/cells/:cell", "/geo/kring/:cell"]},
             {"name": "Telemetry / ingest", "crate": "vi-ingest", "rows": cases,
-             "routes": ["/ingest/run", "/ingest/status", "/ingest/sources"]},
+             "routes": ["/ingest/run", "/ingest/cycle", "/ingest/status", "/ingest/sources", "/ingest/place-courts"]},
             {"name": "Post-ingest pipeline", "crate": "vi-pipeline", "rows": pipeline_runs,
-             "routes": ["/pipeline/run", "/pipeline/status"]},
+             "routes": ["/pipeline/run", "/pipeline/status", "/pipeline/unresolved-officials"]},
             {"name": "JIT LASM", "crate": "vi-lasm", "rows": cases,
              "routes": ["/lasm/package/:case_id"]},
             {"name": "Monell atlas", "crate": "vi-monell-atlas", "rows": findings,

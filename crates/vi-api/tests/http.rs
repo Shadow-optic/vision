@@ -143,6 +143,16 @@ async fn all_engines_wired_over_http() {
         .iter()
         .any(|c| c["source"] == "fixture"));
 
+    let (st, body) = send(app.clone(), "GET", "/ingest/sources", None).await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let sources = json_body(&body);
+    assert!(sources["exclusions"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .any(|x| x == "sealed"));
+    assert!(sources["totals"]["cases"].as_i64().unwrap() >= 1);
+
     let cell = vi_geo::cell_for(37.7749, -122.4194, 8).unwrap();
     let (st, body) = send(app.clone(), "GET", &format!("/geo/cells/{cell}"), None).await;
     assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
@@ -411,6 +421,74 @@ async fn unknown_ingest_source_is_bad_request() {
         return;
     };
     let (st, body) = send(app, "POST", "/ingest/run", Some(json!({"source": "pacer"}))).await;
+    assert_eq!(
+        st,
+        StatusCode::BAD_REQUEST,
+        "{}",
+        String::from_utf8_lossy(&body)
+    );
+}
+
+/// The APIs that start live ingestion must be wired together: one request
+/// polls, places unplaced courts, and walks new records through the engines.
+#[tokio::test]
+async fn ingest_cycle_wires_feeds_placement_and_pipeline() {
+    let Some(app) = router().await else {
+        eprintln!("skipping: DATABASE_URL not set");
+        return;
+    };
+
+    let (st, body) = send(
+        app.clone(),
+        "POST",
+        "/ingest/cycle",
+        Some(json!({"source": "fixture", "declare": false})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let cycle = json_body(&body);
+    assert_eq!(cycle["source"], "fixture");
+    assert_eq!(cycle["feeds"].as_array().unwrap().len(), 1);
+    assert!(cycle["totals"]["cases"].as_u64().unwrap() >= 1);
+    assert!(cycle["totals"]["opinions"].as_u64().unwrap() >= 1);
+    assert!(cycle["courts"].is_object());
+    assert!(cycle["pipeline"].is_object());
+    // The fixture record is processed on the first cycle. A rerun is
+    // idempotent and may report zero pending cases.
+    assert!(cycle["pipeline"]["cases_processed"].as_u64().is_some());
+
+    let (st, body) = send(
+        app.clone(),
+        "POST",
+        "/ingest/run",
+        Some(json!({"source": "fixture", "cycle": true, "declare": false})),
+    )
+    .await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let via_run = json_body(&body);
+    assert!(via_run["feeds"].is_array());
+    assert!(via_run["pipeline"].is_object());
+
+    let (st, body) = send(app.clone(), "POST", "/ingest/place-courts", None).await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    assert!(json_body(&body)["placed"].is_array());
+
+    let (st, body) = send(app.clone(), "GET", "/pipeline/status", None).await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+    let pipe = json_body(&body);
+    assert!(pipe["stages"].as_array().unwrap().contains(&json!("forum")));
+    assert!(pipe["cases"]["total"].as_i64().unwrap() >= 1);
+
+    let (st, body) = send(app.clone(), "GET", "/pipeline/unresolved-officials", None).await;
+    assert_eq!(st, StatusCode::OK, "{}", String::from_utf8_lossy(&body));
+
+    let (st, body) = send(
+        app,
+        "POST",
+        "/ingest/cycle",
+        Some(json!({"source": "pacer"})),
+    )
+    .await;
     assert_eq!(
         st,
         StatusCode::BAD_REQUEST,

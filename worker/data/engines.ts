@@ -61,7 +61,7 @@ export const ENGINES: EngineDescriptor[] = [
 		crate: "vi-ingest",
 		summary:
 			"Live public feeds — courts registry, search, and per-court Atom — with cursor checkpoints. Where a feed publishes only an extract of an opinion, the record says so rather than presenting it as the whole text.",
-		routes: ["/ingest/run", "/ingest/status", "/ingest/sources"],
+		routes: ["/ingest/run", "/ingest/cycle", "/ingest/status", "/ingest/sources", "/ingest/place-courts"],
 	},
 	{
 		name: "Post-ingest pipeline",
