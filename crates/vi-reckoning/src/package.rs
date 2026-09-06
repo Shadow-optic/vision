@@ -164,8 +164,7 @@ pub async fn generate(
         .into_iter()
         .map(|e| crate::report::LedgerRef {
             seq: e.seq,
-            event_type: e.event_ty
-pe,
+            event_type: e.event_type,
             entry_hash: e.entry_hash,
         })
         .collect();
