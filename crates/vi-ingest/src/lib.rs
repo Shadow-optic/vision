@@ -834,8 +834,12 @@ pub async fn persist_court(pool: &PgPool, c: &CourtRecord) -> Result<()> {
     Ok(())
 }
 
-/// The forum for a case: the registry first, then a static derivation, then
-/// whatever the source called it.
+/// The forum for a case: the registry first, then a static derivation.
+///
+/// A court that cannot be placed yields `unknown`, never the source's court id.
+/// Writing "txctapp6" into a column named `jurisdiction` would state that a
+/// case sits in a forum that does not exist, and screening reads that column to
+/// decide which body of law applies.
 async fn resolve_forum(
     pool: &PgPool,
     c: &NormalizedCase,
@@ -861,7 +865,138 @@ async fn resolve_forum(
             ));
         }
     }
-    Ok((c.jurisdiction.clone(), c.court_level.clone(), "source"))
+    // The source's own value is only a forum if it is one. A court id is not.
+    let claimed = c.jurisdiction.trim();
+    if vi_constitution::jurisdictions::lookup(claimed).is_some() {
+        return Ok((claimed.to_string(), c.court_level.clone(), "source"));
+    }
+
+    // Nothing on hand places this court, so ask the source about it. This is
+    // the last resort by design: it costs a request, and it only ever runs for
+    // a court id the registry has never seen.
+    if let Some(court_id) = c.source_court_id.as_deref() {
+        if court_lookup_enabled() {
+            match courtlistener::fetch_court(court_id).await {
+                Ok(Some(record)) => {
+                    persist_court(pool, &record).await?;
+                    let mapping = jurisdiction::derive(
+                        &record.court_id,
+                        record.source_class.as_deref(),
+                        &record.full_name,
+                        record.citation_string.as_deref(),
+                    );
+                    if let Some(jur) = mapping.jurisdiction {
+                        return Ok((
+                            jur,
+                            mapping.court_level.or_else(|| c.court_level.clone()),
+                            "court_lookup",
+                        ));
+                    }
+                }
+                Ok(None) => {}
+                Err(e) => {
+                    tracing::warn!(court_id, error = %e, "could not look up a court");
+                }
+            }
+        }
+    }
+
+    Ok(("unknown".to_string(), c.court_level.clone(), "unplaced"))
+}
+
+/// Place cases whose court was unknown when they were ingested.
+///
+/// A case sitting at `jurisdiction = 'unknown'` is a case no engine will screen,
+/// because screening it would mean picking a body of law at random. One lookup
+/// per distinct unplaced court repairs every case behind it.
+pub async fn backfill_unplaced_courts(pool: &PgPool) -> Result<Value> {
+    let ids: Vec<String> = sqlx::query_scalar(
+        "SELECT DISTINCT source_court_id FROM court_cases
+          WHERE jurisdiction = 'unknown' AND source_court_id IS NOT NULL
+          ORDER BY source_court_id",
+    )
+    .fetch_all(pool)
+    .await?;
+
+    let mut placed = Vec::new();
+    let mut unplaced = Vec::new();
+    let mut cases_updated = 0u64;
+
+    for court_id in ids {
+        let mapping = match sqlx::query_as::<_, (Option<String>, Option<String>)>(
+            "SELECT jurisdiction, court_level FROM court_registry WHERE court_id = $1",
+        )
+        .bind(&court_id)
+        .fetch_optional(pool)
+        .await?
+        {
+            Some((Some(jur), level)) => Some((jur, level, "registry")),
+            _ if court_lookup_enabled() => match courtlistener::fetch_court(&court_id).await {
+                Ok(Some(record)) => {
+                    persist_court(pool, &record).await?;
+                    let m = jurisdiction::derive(
+                        &record.court_id,
+                        record.source_class.as_deref(),
+                        &record.full_name,
+                        record.citation_string.as_deref(),
+                    );
+                    m.jurisdiction
+                        .map(|jur| (jur, m.court_level, "court_lookup"))
+                }
+                Ok(None) => None,
+                Err(e) => {
+                    tracing::warn!(court_id, error = %e, "could not look up a court");
+                    None
+                }
+            },
+            _ => None,
+        };
+
+        match mapping {
+            Some((jur, level, method)) => {
+                let n = sqlx::query(
+                    "UPDATE court_cases
+                        SET jurisdiction = $2,
+                            court_level = COALESCE(court_level, $3)
+                      WHERE source_court_id = $1 AND jurisdiction = 'unknown'",
+                )
+                .bind(&court_id)
+                .bind(&jur)
+                .bind(&level)
+                .execute(pool)
+                .await?
+                .rows_affected();
+                cases_updated += n;
+                placed.push(json!({
+                    "court_id": court_id,
+                    "jurisdiction": jur,
+                    "court_level": level,
+                    "method": method,
+                    "cases": n,
+                }));
+            }
+            None => unplaced.push(court_id),
+        }
+    }
+
+    Ok(json!({
+        "placed": placed,
+        "still_unplaced": unplaced,
+        "cases_updated": cases_updated,
+        "note": "A case that cannot be placed in a forum is left unscreened rather \
+                 than screened under a body of law that may not govern it.",
+    }))
+}
+
+/// On-demand court lookups need the network. Off by default in tests and any
+/// deployment that must ingest without reaching out.
+fn court_lookup_enabled() -> bool {
+    !matches!(
+        std::env::var("INGEST_COURT_LOOKUP")
+            .unwrap_or_default()
+            .trim(),
+        "0" | "false" | "no" | "off"
+    )
 }
 
 /// Upsert + forum resolution + H3 ladder + ledger provenance for one record.
@@ -885,10 +1020,13 @@ pub async fn persist_case(
         "INSERT INTO court_cases
            (case_id, docket_number, jurisdiction, court_level, charge_category, judge,
             filing_date, court_location_lat, court_location_lng,
-            court_h3_cell, incident_h3_cell, source_url, raw_data, hash)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)
+            court_h3_cell, incident_h3_cell, source_url, raw_data, hash,
+            source_court_id)
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15)
          ON CONFLICT (docket_number) DO UPDATE SET
             jurisdiction = EXCLUDED.jurisdiction,
+            source_court_id = COALESCE(EXCLUDED.source_court_id,
+                                       court_cases.source_court_id),
             court_level = COALESCE(court_cases.court_level, EXCLUDED.court_level),
             charge_category = COALESCE(court_cases.charge_category, EXCLUDED.charge_category),
             judge = COALESCE(court_cases.judge, EXCLUDED.judge),
@@ -913,6 +1051,7 @@ pub async fn persist_case(
     .bind(&c.source_url)
     .bind(&c.raw)
     .bind(&raw_hash)
+    .bind(&c.source_court_id)
     .fetch_one(pool)
     .await?;
 

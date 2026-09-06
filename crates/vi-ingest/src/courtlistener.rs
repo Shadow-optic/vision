@@ -163,6 +163,64 @@ pub struct CourtRegistry {
     in_use_only: bool,
 }
 
+/// One court as the courts endpoint describes it.
+fn court_record(r: Value) -> Option<CourtRecord> {
+    let court_id = r.get("id").and_then(Value::as_str)?.to_string();
+    let full_name = r
+        .get("full_name")
+        .and_then(Value::as_str)
+        .unwrap_or(&court_id)
+        .to_string();
+    Some(CourtRecord {
+        full_name,
+        short_name: r.get("short_name").and_then(Value::as_str).map(str::to_string),
+        citation_string: r
+            .get("citation_string")
+            .and_then(Value::as_str)
+            .filter(|s| !s.is_empty())
+            .map(str::to_string),
+        source_class: r
+            .get("jurisdiction")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        in_use: r.get("in_use").and_then(Value::as_bool).unwrap_or(false),
+        parent_court: r
+            .get("parent_court")
+            .and_then(Value::as_str)
+            .map(str::to_string),
+        start_date: date(r.get("start_date").and_then(Value::as_str)),
+        end_date: date(r.get("end_date").and_then(Value::as_str)),
+        source_url: Some(format!("{BASE}/api/rest/v4/courts/{court_id}/")),
+        raw: r,
+        court_id,
+    })
+}
+
+/// Ask the source about one court.
+///
+/// The registry crawl is scoped to courts the source marks `in_use`, and that
+/// flag turns out to omit courts still handing down the opinions we ingest —
+/// `txctapp6` among them. Rather than guess a forum from the shape of an id,
+/// which is how "ariz" becomes Arkansas, ask for the court by name. One
+/// request per unplaced court, then it is in the registry for good.
+pub async fn fetch_court(court_id: &str) -> Result<Option<CourtRecord>> {
+    if court_id.is_empty()
+        || !court_id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || c == '_' || c == '-')
+    {
+        return Ok(None);
+    }
+    let client = http()?;
+    let url = format!("{BASE}/api/rest/v4/courts/{court_id}/");
+    let token = std::env::var("CL_API_TOKEN")
+        .ok()
+        .map(|t| t.trim().to_string())
+        .filter(|t| !t.is_empty());
+    let body = get_json(&client, &url, token.as_deref()).await?;
+    Ok(court_record(body))
+}
+
 impl CourtRegistry {
     pub fn new(pages: usize) -> Result<Self> {
         Ok(Self {
@@ -216,42 +274,7 @@ impl Source for CourtRegistry {
                 .and_then(Value::as_array)
                 .cloned()
                 .unwrap_or_default();
-            for r in results {
-                let Some(court_id) = r.get("id").and_then(Value::as_str) else {
-                    continue;
-                };
-                let full_name = r
-                    .get("full_name")
-                    .and_then(Value::as_str)
-                    .unwrap_or(court_id)
-                    .to_string();
-                courts.push(CourtRecord {
-                    court_id: court_id.to_string(),
-                    full_name,
-                    short_name: r
-                        .get("short_name")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    citation_string: r
-                        .get("citation_string")
-                        .and_then(Value::as_str)
-                        .filter(|s| !s.is_empty())
-                        .map(str::to_string),
-                    source_class: r
-                        .get("jurisdiction")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    in_use: r.get("in_use").and_then(Value::as_bool).unwrap_or(false),
-                    parent_court: r
-                        .get("parent_court")
-                        .and_then(Value::as_str)
-                        .map(str::to_string),
-                    start_date: date(r.get("start_date").and_then(Value::as_str)),
-                    end_date: date(r.get("end_date").and_then(Value::as_str)),
-                    source_url: Some(format!("{BASE}/api/rest/v4/courts/{court_id}/")),
-                    raw: r,
-                });
-            }
+            courts.extend(results.into_iter().filter_map(court_record));
             next = body
                 .get("next")
                 .and_then(Value::as_str)
