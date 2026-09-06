@@ -25,6 +25,12 @@ describe("public JSON mirror", () => {
 			"/reckoning/packages/33333333-3333-3333-3333-333333333333",
 			"/prosecutors/11111111-1111-1111-1111-111111111111/stats",
 			"/rules/run",
+			// Reports pending flags per identifiable case, which is the same
+			// disclosure /flags is withheld for.
+			"/pipeline/status",
+			// Quotes an identifiable case's raw judge field while the platform has
+			// declined to say which individuals it names.
+			"/pipeline/unresolved-officials",
 		]) {
 			const res = await api(path);
 			expect(res.status, path).toBe(404);
@@ -32,6 +38,15 @@ describe("public JSON mirror", () => {
 			expect(body.error).toBe("not_allowed");
 			expect(body.message).toContain("/api");
 		}
+	});
+
+	it("publishes its own provenance", async () => {
+		// Which feeds are read is a fact about the platform, not an allegation
+		// about anyone in the records, so it is public.
+		const res = await api("/ingest/sources");
+		expect(res.status).toBe(200);
+		const body = (await res.json()) as { exclusions: string[] };
+		expect(body.exclusions).toContain("sealed");
 	});
 
 	it("rejects writes even on allowlisted paths", async () => {

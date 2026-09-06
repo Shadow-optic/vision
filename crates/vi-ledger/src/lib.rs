@@ -40,6 +40,7 @@ pub mod events {
     pub const ABUSE_SCORE: &str = "AbuseScoreComputed";
     pub const LEGAL_PACKAGE: &str = "LegalActionPackage";
     pub const PUBLICATION_REVIEWED: &str = "PublicationReviewed";
+    pub const PIPELINE_RUN: &str = "PipelineRun";
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, sqlx::FromRow)]

@@ -102,6 +102,99 @@ export const SEARCH = {
 			citation: "People v. Demo, 1 Cal.App.5th 1 (2019)",
 			date_issued: "2019-04-02",
 			rank: 0.42,
+			text_completeness: "snippet",
+			source_url: "https://courts.example/opinion/1",
+			matched_on: "opinion_text",
 		},
 	],
+	// A corpus that is mostly extracts, which is what the anonymous public
+	// feeds actually produce.
+	corpus: { opinions: 89, full_text: 1, partial_text: 88, median_chars: 456 },
+	caveat: "Most stored opinions are partial extracts from public feeds.",
+};
+
+/** A corpus of complete opinions: the partial-text warning must not appear. */
+export const SEARCH_FULL_CORPUS = {
+	results: [],
+	corpus: { opinions: 40, full_text: 40, partial_text: 0, median_chars: 24000 },
+	caveat: "Search runs over stored opinion text.",
+};
+
+export const INGEST_SOURCES = {
+	sources: [
+		{
+			source: "courtlistener-search/brady-violation",
+			label: "CourtListener search: \u201cbrady violation\u201d",
+			configured: true,
+			status: {
+				feed_kind: "search",
+				last_ok_at: "2026-09-06T00:54:54.706158+00:00",
+				last_error: null,
+				consecutive_failures: 0,
+				new_cases: 19,
+				new_opinions: 19,
+				total_skipped: 2,
+			},
+		},
+		{
+			source: "courtlistener-courts",
+			label: "CourtListener courts registry",
+			configured: true,
+			status: {
+				feed_kind: "registry",
+				last_ok_at: "2026-09-06T00:54:12.592989+00:00",
+				last_error: "429 Too Many Requests (rate limited)",
+				consecutive_failures: 1,
+				new_cases: 0,
+				new_opinions: 0,
+				total_skipped: 0,
+			},
+		},
+		// Stopped part-way through a long list, kept its place, and is not failing.
+		{
+			source: "courtlistener-feed/ca9",
+			label: "CourtListener Atom feed: ca9",
+			configured: true,
+			status: {
+				feed_kind: "atom",
+				last_ok_at: "2026-09-06T00:52:00.000000+00:00",
+				last_error: null,
+				last_pause:
+					"read 4 page(s) this poll, the per-poll budget; the court list continues and the next poll resumes where this one stopped.",
+				next_url: "https://www.courtlistener.com/api/rest/v4/courts/?page=5",
+				consecutive_failures: 0,
+				new_cases: 19,
+				new_opinions: 20,
+				total_skipped: 0,
+			},
+		},
+		// Read to the end and waiting to be refreshed: finished, not interrupted.
+		{
+			source: "courtlistener-feed/scotus",
+			label: "CourtListener Atom feed: scotus",
+			configured: true,
+			status: {
+				feed_kind: "atom",
+				last_ok_at: "2026-09-06T01:50:59.107034+00:00",
+				last_error: null,
+				last_pause:
+					"court list was read to the end at 2026-09-06 01:50 UTC; next full crawl due 2026-09-07 01:50 UTC.",
+				next_url: "complete:2026-09-06T01:50:58.631716127+00:00",
+				consecutive_failures: 0,
+				new_cases: 20,
+				new_opinions: 20,
+				total_skipped: 0,
+			},
+		},
+	],
+	exclusions: ["sealed", "juvenile", "expunged", "source-blocked", "empty text"],
+	note: "Ingestion records what a public source published.",
+};
+
+export const PIPELINE_STATUS = {
+	cases: { total: 91, awaiting_pipeline: 0 },
+	stages: ["forum", "constitution_screen", "evidence_leads", "abuse_rules", "actor_links", "score"],
+	totals: { runs: 91, screens: 91, flags_fired: 3, evidence_gaps: 7, actors_linked: 36 },
+	unresolved_officials: { open_ambiguous: 2, open_collective: 1, closed: 0 },
+	note: "Everything the pipeline produces is pending review.",
 };

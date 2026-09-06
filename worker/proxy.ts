@@ -25,7 +25,7 @@ export interface AllowedRoute {
 export const ALLOWED: AllowedRoute[] = [
 	{ pattern: "/health", ttl: 0, summary: "Backend liveness." },
 	{ pattern: "/ready", ttl: 0, summary: "Backend readiness, including the database." },
-	{ pattern: "/engines", ttl: 30, summary: "The fourteen engines with live row counts." },
+	{ pattern: "/engines", ttl: 30, summary: "Every engine with its live row count." },
 	{ pattern: "/ledger/verify", ttl: 30, summary: "Recompute and verify the whole hash chain." },
 	{
 		pattern: "/reckoning/wall",
@@ -56,7 +56,8 @@ export const ALLOWED: AllowedRoute[] = [
 		pattern: "/cases/search",
 		params: ["q", "limit"],
 		ttl: 120,
-		summary: "Full-text search over ingested public opinions.",
+		summary:
+			"Search over ingested public opinions. Reports how much of the stored corpus is complete text, because most feed records are extracts.",
 	},
 	{ pattern: "/cases/:id", ttl: 300, summary: "Case context for one ingested public case." },
 	{ pattern: "/constitution", ttl: 3600, summary: "Constitutional corpus catalog." },
@@ -128,6 +129,12 @@ export const ALLOWED: AllowedRoute[] = [
 		summary: "Aggregates across a k-ring of H3 cells.",
 	},
 	{ pattern: "/ingest/status", ttl: 60, summary: "Ingest cursors and last-run status." },
+	{
+		pattern: "/ingest/sources",
+		ttl: 60,
+		summary:
+			"The public feeds this deployment reads, each one's last success or failure, and the categories ingestion refuses to store. Provenance about the platform; it names no individual.",
+	},
 ];
 
 /** Documented, deliberate exclusions — rendered on the /api page. */
@@ -159,6 +166,16 @@ export const WITHHELD: { path: string; reason: string }[] = [
 		path: "/prosecutors/:id/stats, /trial-penalty/judges",
 		reason:
 			"Individual-level statistics without a counsel-substantiated finding attached. Office-level aggregates are published instead.",
+	},
+	{
+		path: "/pipeline/status",
+		reason:
+			"Reports pending flags per identifiable case, which is the same disclosure /flags is withheld for. The aggregate totals appear on /sources instead.",
+	},
+	{
+		path: "/pipeline/unresolved-officials",
+		reason:
+			"Quotes the raw judge field of an identifiable case while the platform has declined to say which individuals it names. The open count appears on /sources instead.",
 	},
 	{
 		path: "All POST routes",

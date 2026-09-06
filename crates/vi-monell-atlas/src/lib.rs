@@ -43,6 +43,11 @@ pub enum Error {
 pub struct FindingInput {
     pub case_id: Option<Uuid>,
     pub prosecutor_id: Option<Uuid>,
+    /// The individual this finding concerns, in any role.
+    ///
+    /// Without this, a finding could only ever name a seeded prosecutor, and a
+    /// judge who abandoned the record would have nowhere to be recorded.
+    pub actor_id: Option<Uuid>,
     pub office: String,
     pub jurisdiction: String,
     pub finding_type: String,
@@ -73,13 +78,14 @@ pub async fn record_finding(
 
     sqlx::query(
         "INSERT INTO constitutional_findings
-         (finding_id, case_id, prosecutor_id, office, jurisdiction, finding_type,
+         (finding_id, case_id, prosecutor_id, actor_id, office, jurisdiction, finding_type,
           court_level, judge, finding_date, source_citation, source_url, summary, document_hash)
-         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)",
+         VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)",
     )
     .bind(id)
     .bind(input.case_id)
     .bind(input.prosecutor_id)
+    .bind(input.actor_id)
     .bind(&input.office)
     .bind(&input.jurisdiction)
     .bind(&input.finding_type)
@@ -98,6 +104,7 @@ pub async fn record_finding(
             EVENT,
             &json!({
                 "finding_id": id,
+                "actor_id": input.actor_id,
                 "office": input.office,
                 "jurisdiction": input.jurisdiction,
                 "finding_type": input.finding_type,

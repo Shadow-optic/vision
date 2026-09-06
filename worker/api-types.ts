@@ -85,8 +85,77 @@ export interface CaseHit {
 	citation: string | null;
 	date_issued: string | null;
 	rank: number | null;
+	/** `full`, or `snippet`/`summary` for a partial extract from a feed. */
+	text_completeness?: string | null;
+	source_url?: string | null;
+	matched_on?: string | null;
+}
+
+/** How much of the stored corpus is complete opinion text. */
+export interface SearchCorpus {
+	opinions: number;
+	full_text: number;
+	partial_text: number;
+	median_chars: number;
 }
 
 export interface SearchResponse {
 	results: CaseHit[];
+	corpus?: SearchCorpus;
+	caveat?: string;
+}
+
+export interface IngestCursorStatus {
+	feed_kind?: string | null;
+	label?: string | null;
+	last_ok_at?: string | null;
+	last_polled_at?: string | null;
+	last_error?: string | null;
+	/**
+	 * Why the last poll stopped before the end of the feed, having kept what it
+	 * read. A long list interrupted by a rate limit is progress, not a failure.
+	 */
+	last_pause?: string | null;
+	/**
+	 * Where the next poll resumes. A `complete:<timestamp>` value means the
+	 * feed's list was read to the end and is waiting to be refreshed, which is
+	 * a finished feed rather than an interrupted one.
+	 */
+	next_url?: string | null;
+	consecutive_failures?: number;
+	new_cases?: number;
+	new_opinions?: number;
+	total_skipped?: number;
+}
+
+export interface IngestSource {
+	source: string;
+	label?: string | null;
+	configured: boolean;
+	status?: IngestCursorStatus | null;
+}
+
+export interface IngestSourcesResponse {
+	sources: IngestSource[];
+	/** Categories never stored, whatever a feed publishes. */
+	exclusions?: string[];
+	note?: string;
+}
+
+export interface PipelineStatusResponse {
+	cases?: { total: number; awaiting_pipeline: number };
+	stages?: string[];
+	totals?: {
+		runs?: number;
+		screens?: number;
+		flags_fired?: number;
+		evidence_gaps?: number;
+		actors_linked?: number;
+	};
+	unresolved_officials?: {
+		open_ambiguous?: number;
+		open_collective?: number;
+		closed?: number;
+	};
+	note?: string;
 }

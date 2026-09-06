@@ -8,6 +8,24 @@ import { empty, notice, offline, unconfigured } from "../view/components";
 
 const MAX_QUERY = 200;
 
+/**
+ * Label the stored text honestly. A snippet presented as an opinion would
+ * invite a reader to treat a caption page as the court's reasoning.
+ */
+function completeness(value: string | null | undefined) {
+	if (value === "full") {
+		return html`<span class="badge badge-substantiated">full opinion</span>`;
+	}
+	if (value === "snippet" || value === "summary") {
+		return html`<span
+			class="badge badge-partial"
+			title="A partial extract from a public feed, not the complete opinion"
+			>${value}</span
+		>`;
+	}
+	return html`<span class="faint">—</span>`;
+}
+
 export async function cases(ctx: Ctx): Promise<Response> {
 	const raw = ctx.url.searchParams.get("q") ?? "";
 	const q = raw.trim().slice(0, MAX_QUERY);
@@ -45,16 +63,37 @@ export async function cases(ctx: Ctx): Promise<Response> {
 			results = offline("case-law search", data.state === "error" ? data.detail : null);
 		} else {
 			const hits = data.data.results ?? [];
+			const corpus = data.data.corpus;
+			// A corpus of caption-page extracts cannot answer "does this term
+			// appear in the opinion", and a bare "no match" would invite the
+			// reader to conclude the case does not exist. Say what was searched.
+			const partialWarning =
+				corpus && corpus.partial_text * 2 > corpus.opinions
+					? notice(
+							"offline",
+							html`<strong>This searched partial text.</strong>
+								${String(corpus.partial_text)} of
+								${String(corpus.opinions)} stored opinions are extracts from a
+								public feed rather than complete texts — a median of
+								${String(corpus.median_chars)} characters, usually the caption
+								page. A term absent here may still appear in the full opinion.
+								<em>An empty result is not evidence that no such case exists.</em>`,
+						)
+					: "";
+
 			results =
 				hits.length === 0
-					? empty(
-							"No opinion matched",
-							html`<p>
-								Full-text search runs against ingested public opinions. Try
-								fewer or more general terms.
-							</p>`,
-						)
-					: html`<p class="faint" role="status">${hits.length} opinion${hits.length === 1 ? "" : "s"} matched</p>
+					? html`${partialWarning}
+							${empty(
+								"No opinion matched",
+								html`<p>
+									Search runs over the opinion text that was stored, not the
+									court's whole record. Try a docket number, a citation, or
+									fewer terms.
+								</p>`,
+							)}`
+					: html`${partialWarning}
+							<p class="faint" role="status">${hits.length} opinion${hits.length === 1 ? "" : "s"} matched</p>
 							<div class="table-scroll">
 								<table class="data">
 									<thead>
@@ -63,16 +102,22 @@ export async function cases(ctx: Ctx): Promise<Response> {
 											<th scope="col">Docket</th>
 											<th scope="col">Jurisdiction</th>
 											<th scope="col">Issued</th>
+											<th scope="col">Stored text</th>
 											<th scope="col">Outcome</th>
 										</tr>
 									</thead>
 									<tbody>
 										${hits.map(
 											(h) => html`<tr>
-												<th scope="row">${h.citation ?? "—"}</th>
+												<th scope="row">
+													${h.source_url
+														? html`<a href="${h.source_url}" rel="nofollow noopener external">${h.citation ?? h.docket_number ?? "source"}</a>`
+														: (h.citation ?? "—")}
+												</th>
 												<td class="mono faint">${h.docket_number ?? "—"}</td>
 												<td>${h.jurisdiction ?? "—"}</td>
 												<td>${h.date_issued ?? "—"}</td>
+												<td>${completeness(h.text_completeness)}</td>
 												<td>${h.outcome ?? "—"}</td>
 											</tr>`,
 										)}
@@ -86,8 +131,8 @@ export async function cases(ctx: Ctx): Promise<Response> {
 		<p class="eyebrow">Case-law engine</p>
 		<h1>Search the public record</h1>
 		<p class="lede">
-			Full-text search over opinions and dockets ingested from public court
-			records. This is the evidentiary floor under every finding on the register.
+			Search over the opinions and dockets ingested from public court records.
+			This is the evidentiary floor under every finding on the register.
 		</p>
 		${form} ${results}
 		${q === ""
@@ -95,8 +140,10 @@ export async function cases(ctx: Ctx): Promise<Response> {
 					"plain",
 					html`<strong>What is searchable.</strong> Opinions and dockets obtained
 						from public court records — nothing sealed, leaked, or purchased.
-						Search results are not findings; a finding requires counsel review
-						against the underlying document.`,
+						Where a feed publishes only an extract of an opinion, that is what is
+						stored and it is labelled as such. Search results are not findings; a
+						finding requires counsel review against the underlying document.
+						<a href="/sources">Which feeds are read</a>.`,
 				)
 			: ""}
 	`;

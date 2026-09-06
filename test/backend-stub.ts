@@ -8,9 +8,12 @@ import {
 	ACTOR_ID,
 	ENGINES,
 	HELD_ACTOR_ID,
+	INGEST_SOURCES,
 	LEDGER,
+	PIPELINE_STATUS,
 	SCORE,
 	SEARCH,
+	SEARCH_FULL_CORPUS,
 	TRACKER,
 	WALL,
 	WALL_PROFILE,
@@ -50,13 +53,25 @@ export function handleBackendRequest(request: Request): Response {
 			return json({ error: "not_found" }, 404);
 		case `/reckoning/actors/${ACTOR_ID}/score`:
 			return json(SCORE);
-		case "/cases/search":
-			return json(url.searchParams.get("q") === "brady" ? SEARCH : { results: [] });
+		case "/cases/search": {
+			const q = url.searchParams.get("q");
+			if (q === "brady") return json(SEARCH);
+			if (q === "complete") return json(SEARCH_FULL_CORPUS);
+			// No hit, but the corpus is still mostly extracts.
+			return json({
+				results: [],
+				corpus: { opinions: 89, full_text: 1, partial_text: 88, median_chars: 456 },
+			});
+		}
 		case "/constitution/search":
 			// Echoes the forwarded query so tests can assert parameter scrubbing.
 			return json({ query: url.search, results: [] });
 		case "/ingest/status":
 			return json({ error: "boom" }, 500);
+		case "/ingest/sources":
+			return json(INGEST_SOURCES);
+		case "/pipeline/status":
+			return json(PIPELINE_STATUS);
 		default:
 			return json({ error: "not_found", path }, 404);
 	}

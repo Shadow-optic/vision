@@ -64,37 +64,40 @@ pub fn validate_kind(kind: &str) -> Result<(), Error> {
 
 pub async fn evidence_for_actor(pool: &PgPool, actor: &Actor) -> Result<Vec<EvidenceRow>, Error> {
     let mut rows = Vec::new();
-    if let Some(pid) = actor.prosecutor_id {
-        let findings: Vec<EvidenceRow> = sqlx::query_as(
-            "SELECT 'constitutional_finding'::text AS source_kind,
-                    finding_type AS label,
-                    source_citation AS citation,
-                    summary,
-                    case_id
-             FROM constitutional_findings
-             WHERE prosecutor_id = $1 AND review_status = 'substantiated'
-             ORDER BY finding_date NULLS LAST, created_at",
-        )
-        .bind(pid)
-        .fetch_all(pool)
-        .await?;
-        rows.extend(findings);
+    let findings: Vec<EvidenceRow> = sqlx::query_as(&format!(
+        "SELECT 'constitutional_finding'::text AS source_kind,
+                f.finding_type AS label,
+                f.source_citation AS citation,
+                f.summary,
+                f.case_id
+           FROM constitutional_findings f
+          WHERE f.review_status = 'substantiated' AND {matches}
+          ORDER BY f.finding_date NULLS LAST, f.created_at",
+        matches = crate::FINDING_MATCHES_ACTOR_PARAMS
+    ))
+    .bind(actor.actor_id)
+    .bind(actor.prosecutor_id)
+    .fetch_all(pool)
+    .await?;
+    rows.extend(findings);
 
-        let flags: Vec<EvidenceRow> = sqlx::query_as(
-            "SELECT 'abuse_flag'::text AS source_kind,
-                    label,
-                    NULL::text AS citation,
-                    COALESCE(explanation::text, '') AS summary,
-                    case_id
-             FROM abuse_flags
-             WHERE prosecutor_id = $1 AND review_status = 'substantiated'
-             ORDER BY created_at",
-        )
-        .bind(pid)
-        .fetch_all(pool)
-        .await?;
-        rows.extend(flags);
-    }
+    let flags: Vec<EvidenceRow> = sqlx::query_as(&format!(
+        "SELECT 'abuse_flag'::text AS source_kind,
+                f.label,
+                NULL::text AS citation,
+                COALESCE(f.explanation::text, '') AS summary,
+                f.case_id
+           FROM abuse_flags f
+          WHERE f.review_status = 'substantiated' AND {matches}
+          ORDER BY f.created_at",
+        matches = crate::FINDING_MATCHES_ACTOR_PARAMS
+    ))
+    .bind(actor.actor_id)
+    .bind(actor.prosecutor_id)
+    .fetch_all(pool)
+    .await?;
+    rows.extend(flags);
+
     Ok(rows)
 }
 
@@ -123,17 +126,19 @@ fn destinations(kind: &str, actor: &Actor) -> Vec<&'static str> {
     }
 }
 
-async fn aggravators(pool: &PgPool, prosecutor_id: Option<Uuid>) -> Result<(bool, bool), Error> {
-    let Some(pid) = prosecutor_id else {
-        return Ok((false, false));
-    };
-    let row: (bool, bool) = sqlx::query_as(
-        "SELECT COALESCE(BOOL_OR(death_resulted), false),
-                COALESCE(BOOL_OR(bodily_injury), false)
-         FROM constitutional_findings
-         WHERE prosecutor_id = $1 AND review_status = 'substantiated'",
-    )
-    .bind(pid)
+/// Statutory aggravators — bodily injury, or death resulting — as
+/// substantiated by counsel. These are what raise a § 242 maximum to life, so
+/// they are read from substantiated findings only, never from a lead.
+async fn aggravators(pool: &PgPool, actor: &Actor) -> Result<(bool, bool), Error> {
+    let row: (bool, bool) = sqlx::query_as(&format!(
+        "SELECT COALESCE(BOOL_OR(f.death_resulted), false),
+                COALESCE(BOOL_OR(f.bodily_injury), false)
+           FROM constitutional_findings f
+          WHERE f.review_status = 'substantiated' AND {matches}",
+        matches = crate::FINDING_MATCHES_ACTOR_PARAMS
+    ))
+    .bind(actor.actor_id)
+    .bind(actor.prosecutor_id)
     .fetch_one(pool)
     .await?;
     Ok(row)
@@ -164,7 +169,7 @@ pub async fn generate(
         })
         .collect();
 
-    let (death_resulted, bodily_injury) = aggravators(pool, actor.prosecutor_id).await?;
+    let (death_resulted, bodily_injury) = aggravators(pool, &actor).await?;
     let advocacy = sentencing::assemble(&statutes, death_resulted, bodily_injury);
     let destinations = destinations(kind, &actor);
     let ctx = PackageContext {

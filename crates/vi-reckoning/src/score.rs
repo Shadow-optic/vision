@@ -39,66 +39,59 @@ pub async fn score_actor(
     actor_id: Uuid,
 ) -> Result<AbuseScore, Error> {
     let actor = crate::entity::get(pool, actor_id).await?;
+    let pid = actor.prosecutor_id;
 
-    let findings: i64 = if let Some(pid) = actor.prosecutor_id {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM constitutional_findings
-             WHERE prosecutor_id = $1 AND review_status = 'substantiated'",
-        )
-        .bind(pid)
-        .fetch_one(pool)
-        .await?
-    } else {
-        0
-    };
+    let findings: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM constitutional_findings f
+          WHERE f.review_status = 'substantiated' AND {}",
+        crate::FINDING_MATCHES_ACTOR_PARAMS
+    ))
+    .bind(actor_id)
+    .bind(pid)
+    .fetch_one(pool)
+    .await?;
 
-    let flags: i64 = if let Some(pid) = actor.prosecutor_id {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM abuse_flags
-             WHERE prosecutor_id = $1 AND review_status = 'substantiated'",
-        )
-        .bind(pid)
-        .fetch_one(pool)
-        .await?
-    } else {
-        0
-    };
+    let flags: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM abuse_flags f
+          WHERE f.review_status = 'substantiated' AND {}",
+        crate::FINDING_MATCHES_ACTOR_PARAMS
+    ))
+    .bind(actor_id)
+    .bind(pid)
+    .fetch_one(pool)
+    .await?;
 
-    let recent_5yr: i64 = if let Some(pid) = actor.prosecutor_id {
-        sqlx::query_scalar(
-            "SELECT COUNT(*) FROM constitutional_findings
-             WHERE prosecutor_id = $1 AND review_status = 'substantiated'
-               AND finding_date >= CURRENT_DATE - INTERVAL '5 years'",
-        )
-        .bind(pid)
-        .fetch_one(pool)
-        .await?
-    } else {
-        0
-    };
+    let recent_5yr: i64 = sqlx::query_scalar(&format!(
+        "SELECT COUNT(*) FROM constitutional_findings f
+          WHERE f.review_status = 'substantiated'
+            AND f.finding_date >= CURRENT_DATE - INTERVAL '5 years'
+            AND {}",
+        crate::FINDING_MATCHES_ACTOR_PARAMS
+    ))
+    .bind(actor_id)
+    .bind(pid)
+    .fetch_one(pool)
+    .await?;
 
-    let finding_types: Vec<String> = if let Some(pid) = actor.prosecutor_id {
-        sqlx::query_scalar(
-            "SELECT DISTINCT finding_type FROM constitutional_findings
-             WHERE prosecutor_id = $1 AND review_status = 'substantiated'",
-        )
-        .bind(pid)
-        .fetch_all(pool)
-        .await?
-    } else {
-        Vec::new()
-    };
-    let flag_labels: Vec<String> = if let Some(pid) = actor.prosecutor_id {
-        sqlx::query_scalar(
-            "SELECT DISTINCT label FROM abuse_flags
-             WHERE prosecutor_id = $1 AND review_status = 'substantiated'",
-        )
-        .bind(pid)
-        .fetch_all(pool)
-        .await?
-    } else {
-        Vec::new()
-    };
+    let finding_types: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT DISTINCT f.finding_type FROM constitutional_findings f
+          WHERE f.review_status = 'substantiated' AND {}",
+        crate::FINDING_MATCHES_ACTOR_PARAMS
+    ))
+    .bind(actor_id)
+    .bind(pid)
+    .fetch_all(pool)
+    .await?;
+
+    let flag_labels: Vec<String> = sqlx::query_scalar(&format!(
+        "SELECT DISTINCT f.label FROM abuse_flags f
+          WHERE f.review_status = 'substantiated' AND {}",
+        crate::FINDING_MATCHES_ACTOR_PARAMS
+    ))
+    .bind(actor_id)
+    .bind(pid)
+    .fetch_all(pool)
+    .await?;
 
     let mut sources = finding_types;
     for label in flag_labels {

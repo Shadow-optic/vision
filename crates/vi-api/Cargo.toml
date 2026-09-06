@@ -24,6 +24,7 @@ vi-ingest = { path = "../vi-ingest" }
 vi-lasm = { path = "../vi-lasm" }
 vi-ledger = { path = "../vi-ledger" }
 vi-monell-atlas = { path = "../vi-monell-atlas" }
+vi-pipeline = { path = "../vi-pipeline" }
 vi-sim = { path = "../vi-sim" }
 vi-tactics = { path = "../vi-tactics" }
 vi-trial-penalty = { path = "../vi-trial-penalty" }

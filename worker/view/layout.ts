@@ -16,6 +16,7 @@ export const NAV: { href: string; label: string }[] = [
 const FOOTER_LINKS: { href: string; label: string }[] = [
 	{ href: "/doctrine", label: "Individual Accountability Doctrine" },
 	{ href: "/corrections", label: "Corrections & privacy holds" },
+	{ href: "/sources", label: "Sources & provenance" },
 	{ href: "/ledger", label: "Root Ledger" },
 	{ href: "/api", label: "Public API" },
 	{ href: "/healthz", label: "Status" },

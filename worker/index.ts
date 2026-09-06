@@ -22,6 +22,7 @@ import { statutes, immunity } from "./pages/statutes";
 import { engines, statusPage } from "./pages/engines";
 import { tracker, ledger } from "./pages/tracker";
 import { cases } from "./pages/cases";
+import { sources } from "./pages/sources";
 import { apiDocs } from "./pages/api";
 import { methodNotAllowed, notFound, serverError } from "./pages/errors";
 
@@ -31,6 +32,7 @@ const PUBLIC_PAGES = [
 	"/statutes",
 	"/immunity",
 	"/cases",
+	"/sources",
 	"/tracker",
 	"/engines",
 	"/doctrine",
@@ -52,6 +54,7 @@ const router = new Router<Ctx>()
 	.get("/tracker", (ctx) => tracker(ctx))
 	.get("/ledger", (ctx) => ledger(ctx))
 	.get("/cases", (ctx) => cases(ctx))
+	.get("/sources", (ctx) => sources(ctx))
 	.get("/api", (ctx) => apiDocs(ctx))
 	.get("/healthz", (ctx) => healthz(ctx))
 	.get("/robots.txt", (ctx) => robots(ctx))

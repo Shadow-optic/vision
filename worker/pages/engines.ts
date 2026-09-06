@@ -33,7 +33,7 @@ export async function engines(ctx: Ctx): Promise<Response> {
 
 	const body = html`
 		<p class="eyebrow">Architecture</p>
-		<h1>Fourteen engines</h1>
+		<h1>${String(ENGINES.length)} engines</h1>
 		<p class="lede">
 			Every number on this site is produced by one of these engines from stored
 			public records, and every action they take is appended to the Root Ledger.
@@ -85,7 +85,7 @@ export async function engines(ctx: Ctx): Promise<Response> {
 			{
 				title: "Engines",
 				description:
-					"The fourteen VisionInjustice engines, what each one does, and their live row counts.",
+					`The ${ENGINES.length} VisionInjustice engines, what each one does, and their live row counts.`,
 				path: "/engines",
 				config: ctx.cfg,
 				canonical: `${ctx.url.origin}/engines`,

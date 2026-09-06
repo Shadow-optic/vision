@@ -8,6 +8,10 @@
 //!
 //! Pending TrustScript flags never appear. No photos, home addresses, or
 //! private contact data.
+//!
+//! The register covers every role. A finding reaches the individual it
+//! concerns whether they are a prosecutor, a judge, an officer, or an expert
+//! witness; see [`crate::FINDING_MATCHES_ACTOR_ROW`].
 #![forbid(unsafe_code)]
 
 use serde::Serialize;
@@ -16,7 +20,7 @@ use sqlx::PgPool;
 use uuid::Uuid;
 use vi_ledger::Ledger;
 
-use crate::Error;
+use crate::{Error, FINDING_MATCHES_ACTOR_ROW};
 
 #[derive(Debug, Clone, Serialize, sqlx::FromRow)]
 pub struct WallEntry {
@@ -41,86 +45,72 @@ pub struct TrackerRow {
     pub status: String,
 }
 
-pub async fn wall(pool: &PgPool) -> Result<Vec<WallEntry>, Error> {
-    Ok(sqlx::query_as::<_, WallEntry>(
-        "SELECT a.actor_id, a.role, a.display_name, a.office, a.jurisdiction,
-                a.bar_number, a.badge_number,
-                (SELECT COUNT(*) FROM constitutional_findings f
-                  WHERE f.prosecutor_id = a.prosecutor_id
-                    AND f.review_status = 'substantiated') AS substantiated_findings,
-                COALESCE((
-                  SELECT jsonb_agg(jsonb_build_object(
-                           'finding_type', f.finding_type,
-                           'citation', f.source_citation,
-                           'summary', f.summary,
-                           'finding_date', f.finding_date,
-                           'source_url', f.source_url
-                         ) ORDER BY f.finding_date)
-                  FROM constitutional_findings f
-                  WHERE f.prosecutor_id = a.prosecutor_id
-                    AND f.review_status = 'substantiated'
-                ), '[]'::jsonb) AS public_records,
-                CASE
-                  WHEN EXISTS (
-                    SELECT 1 FROM legal_action_packages p
-                     WHERE p.actor_id = a.actor_id AND p.status = 'referred'
-                  ) THEN 'referred'
-                  ELSE 'substantiated'
-                END AS status
-         FROM accountability_actors a
-         WHERE EXISTS (
+/// Columns shared by the register list and one register card.
+fn entry_columns() -> String {
+    format!(
+        "a.actor_id, a.role, a.display_name, a.office, a.jurisdiction,
+         a.bar_number, a.badge_number,
+         (SELECT COUNT(*) FROM constitutional_findings f
+           WHERE f.review_status = 'substantiated'
+             AND {FINDING_MATCHES_ACTOR_ROW}) AS substantiated_findings,
+         COALESCE((
+           SELECT jsonb_agg(jsonb_build_object(
+                    'finding_type', f.finding_type,
+                    'citation', f.source_citation,
+                    'summary', f.summary,
+                    'finding_date', f.finding_date,
+                    'source_url', f.source_url
+                  ) ORDER BY f.finding_date)
+           FROM constitutional_findings f
+           WHERE f.review_status = 'substantiated'
+             AND {FINDING_MATCHES_ACTOR_ROW}
+         ), '[]'::jsonb) AS public_records,
+         CASE
+           WHEN EXISTS (
+             SELECT 1 FROM legal_action_packages p
+              WHERE p.actor_id = a.actor_id AND p.status = 'referred'
+           ) THEN 'referred'
+           ELSE 'substantiated'
+         END AS status",
+    )
+}
+
+/// Publication conditions: at least one substantiated finding, and no hold.
+fn publishable() -> String {
+    format!(
+        "EXISTS (
            SELECT 1 FROM constitutional_findings f
-            WHERE f.prosecutor_id = a.prosecutor_id
-              AND f.review_status = 'substantiated'
+            WHERE f.review_status = 'substantiated'
+              AND {FINDING_MATCHES_ACTOR_ROW}
          )
          AND NOT EXISTS (
            SELECT 1 FROM publication_approvals pa
             WHERE pa.actor_id = a.actor_id AND pa.approved = false
-         )
-         ORDER BY substantiated_findings DESC, a.display_name",
+         )",
     )
+}
+
+pub async fn wall(pool: &PgPool) -> Result<Vec<WallEntry>, Error> {
+    Ok(sqlx::query_as::<_, WallEntry>(&format!(
+        "SELECT {columns}
+           FROM accountability_actors a
+          WHERE {publishable}
+          ORDER BY substantiated_findings DESC, a.display_name",
+        columns = entry_columns(),
+        publishable = publishable(),
+    ))
     .fetch_all(pool)
     .await?)
 }
 
 pub async fn wall_profile(pool: &PgPool, actor_id: Uuid) -> Result<WallEntry, Error> {
-    sqlx::query_as::<_, WallEntry>(
-        "SELECT a.actor_id, a.role, a.display_name, a.office, a.jurisdiction,
-                a.bar_number, a.badge_number,
-                (SELECT COUNT(*) FROM constitutional_findings f
-                  WHERE f.prosecutor_id = a.prosecutor_id
-                    AND f.review_status = 'substantiated') AS substantiated_findings,
-                COALESCE((
-                  SELECT jsonb_agg(jsonb_build_object(
-                           'finding_type', f.finding_type,
-                           'citation', f.source_citation,
-                           'summary', f.summary,
-                           'finding_date', f.finding_date,
-                           'source_url', f.source_url
-                         ) ORDER BY f.finding_date)
-                  FROM constitutional_findings f
-                  WHERE f.prosecutor_id = a.prosecutor_id
-                    AND f.review_status = 'substantiated'
-                ), '[]'::jsonb) AS public_records,
-                CASE
-                  WHEN EXISTS (
-                    SELECT 1 FROM legal_action_packages p
-                     WHERE p.actor_id = a.actor_id AND p.status = 'referred'
-                  ) THEN 'referred'
-                  ELSE 'substantiated'
-                END AS status
-         FROM accountability_actors a
-         WHERE a.actor_id = $1
-           AND EXISTS (
-             SELECT 1 FROM constitutional_findings f
-              WHERE f.prosecutor_id = a.prosecutor_id
-                AND f.review_status = 'substantiated'
-           )
-           AND NOT EXISTS (
-             SELECT 1 FROM publication_approvals pa
-              WHERE pa.actor_id = a.actor_id AND pa.approved = false
-           )",
-    )
+    sqlx::query_as::<_, WallEntry>(&format!(
+        "SELECT {columns}
+           FROM accountability_actors a
+          WHERE a.actor_id = $1 AND {publishable}",
+        columns = entry_columns(),
+        publishable = publishable(),
+    ))
     .bind(actor_id)
     .fetch_optional(pool)
     .await?
@@ -128,23 +118,16 @@ pub async fn wall_profile(pool: &PgPool, actor_id: Uuid) -> Result<WallEntry, Er
 }
 
 pub async fn tracker(pool: &PgPool) -> Result<Vec<TrackerRow>, Error> {
-    Ok(sqlx::query_as::<_, TrackerRow>(
-        r#"SELECT p.package_id, p.actor_id, a.display_name, p.action_kind, p.status
+    Ok(sqlx::query_as::<_, TrackerRow>(&format!(
+        "SELECT p.package_id, p.actor_id, a.display_name, p.action_kind, p.status
            FROM legal_action_packages p
            JOIN accountability_actors a ON a.actor_id = p.actor_id
-           WHERE p.status IN ('attorney_reviewed','referred')
-             AND EXISTS (
-               SELECT 1 FROM constitutional_findings f
-                WHERE f.prosecutor_id = a.prosecutor_id
-                  AND f.review_status = 'substantiated'
-             )
-             AND NOT EXISTS (
-               SELECT 1 FROM publication_approvals pa
-                WHERE pa.actor_id = a.actor_id AND pa.approved = false
-             )
-           ORDER BY p.created_at DESC
-           LIMIT 200"#,
-    )
+          WHERE p.status IN ('attorney_reviewed','referred')
+            AND {publishable}
+          ORDER BY p.created_at DESC
+          LIMIT 200",
+        publishable = publishable(),
+    ))
     .fetch_all(pool)
     .await?)
 }
@@ -159,14 +142,15 @@ pub async fn set_publication(
     approved_by: Option<Uuid>,
     notes: Option<String>,
 ) -> Result<(), Error> {
-    let _ = crate::entity::get(pool, actor_id).await?;
+    let actor = crate::entity::get(pool, actor_id).await?;
     if approved {
-        let findings: i64 = sqlx::query_scalar(
+        let findings: i64 = sqlx::query_scalar(&format!(
             "SELECT COUNT(*) FROM constitutional_findings f
-             JOIN accountability_actors a ON a.prosecutor_id = f.prosecutor_id
-             WHERE a.actor_id = $1 AND f.review_status = 'substantiated'",
-        )
+              WHERE f.review_status = 'substantiated' AND {matches}",
+            matches = crate::FINDING_MATCHES_ACTOR_PARAMS
+        ))
         .bind(actor_id)
+        .bind(actor.prosecutor_id)
         .fetch_one(pool)
         .await?;
         if findings == 0 {

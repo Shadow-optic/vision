@@ -18,7 +18,7 @@ The repository is connected to Cloudflare **Workers Builds** for the Worker name
 # from a workstation with an authenticated wrangler
 npm ci --legacy-peer-deps
 npm run check          # typecheck + build
-npm test               # 50 tests in the Workers runtime
+npm test               # 60 tests in the Workers runtime
 npx wrangler deploy
 ```
 
@@ -90,7 +90,51 @@ issues `GET`s against an allowlist of public paths, but the backend itself
 exposes counsel operations — publication holds, package generation, rule runs,
 ingestion — and those must never be reachable from the internet.
 
-## 4. Custom domain
+## 4. Start live ingestion
+
+`vi-ingest` is a scheduler. Each cycle it polls the configured public feeds,
+places any court it could not resolve, then walks new records through every
+engine. Nothing it produces is published: screens, evidence leads, flags, and
+identity links are all pending until licensed counsel reviews them.
+
+```bash
+docker compose up -d ingest
+# or directly
+INGEST_SOURCES=courtlistener-courts,courtlistener-search,courtlistener-feed \
+INGEST_INTERVAL_SECS=900 ./vi-ingest
+```
+
+| Variable | Effect |
+|---|---|
+| `INGEST_SOURCES` | feeds to poll, or `all`. See [`.env.example`](.env.example) |
+| `CL_SEARCH_QUERIES` | semicolon-separated search queries |
+| `CL_FEED_COURTS` | court ids for the per-court Atom feeds |
+| `CL_API_TOKEN` | optional; the only way to get complete opinion text |
+| `CL_COURTS_PAGES` | registry pages per cycle; a crawl resumes where it stopped |
+| `INGEST_INTERVAL_SECS` | unset runs one cycle; set to loop |
+| `INGEST_PIPELINE` | `0` ingests without running the engines |
+| `INGEST_COURT_LOOKUP` | `0` never fetches a court the registry lacks |
+
+**Without `CL_API_TOKEN` the feeds return extracts, not opinions.** A few
+hundred characters, usually the caption page. Those rows are stored with
+`text_completeness = 'snippet'` and the site labels them as such, because a
+caption page presented as an opinion would let a reader treat the absence of a
+term as proof the court never discussed it. Set a token if you need the corpus
+to be searchable prose.
+
+Feeds are idempotent: re-polling the same head stores nothing new. Every feed's
+last success, last error, and new-record counts are published at `/sources`,
+and a failing feed is shown rather than hidden — a gap in coverage the public
+cannot see looks like an absence of misconduct.
+
+A feed reading a long list — the court registry is the one that does — may run
+out of its per-cycle page budget before the end. It keeps the records it read
+and the page to resume on, so the next cycle continues rather than starting
+over, and `/sources` shows it as mid-list rather than as healthy or failing.
+Once the list is read to the end it is left alone for 24 hours; a court missing
+from it is fetched by name when a record needs placing.
+
+## 5. Custom domain
 
 Add a route in `wrangler.jsonc` once DNS is on Cloudflare:
 
@@ -105,13 +149,15 @@ Set `SITE_NAME` and `CONTACT_EMAIL` vars at the same time — `CONTACT_EMAIL` is
 published as the corrections and victim-privacy-hold channel, so it must reach
 counsel.
 
-## 5. Verify a deployment
+## 6. Verify a deployment
 
 ```bash
 curl -s https://<host>/healthz | jq          # edge + backend status
 curl -sI https://<host>/ | grep -i content-security-policy
 curl -s https://<host>/api/reckoning/wall | jq '.entries | length'
+curl -s https://<host>/api/ingest/sources | jq '.sources | length'
 curl -s -o /dev/null -w '%{http_code}\n' https://<host>/api/flags   # must be 404
+curl -s -o /dev/null -w '%{http_code}\n' https://<host>/api/pipeline/status  # must be 404
 ```
 
 `/healthz` returns `200` when the edge is healthy and the backend is either
