@@ -127,6 +127,56 @@ pub async fn list_packages(
     })))
 }
 
+#[derive(Deserialize)]
+pub struct TransitionBody {
+    /// `attorney_reviewed` or `referred`.
+    pub to: String,
+    pub notes: Option<String>,
+}
+
+/// Move a package along draft -> attorney_reviewed -> referred. Each step is
+/// a counsel act; the state machine rejects skips and regressions with 409.
+pub async fn transition_package(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<TransitionBody>,
+) -> Result<Json<Value>, ApiError> {
+    let pkg = vi_reckoning::transition(&st.pool, &st.ledger, id, &body.to, body.notes.as_deref())
+        .await?;
+    Ok(Json(json!({
+        "package_id": pkg.package_id,
+        "actor_id": pkg.actor_id,
+        "action_kind": pkg.action_kind,
+        "status": pkg.status,
+        "document_hash": pkg.document_hash,
+    })))
+}
+
+#[derive(Deserialize)]
+pub struct ResolveUnresolvedBody {
+    /// `identified` or `not_identifiable`.
+    pub resolution: String,
+    pub notes: Option<String>,
+}
+
+/// Close an unresolved-officials queue entry. Only a human can say whether
+/// the raw field named anyone; the close-out is ledger-chained either way.
+pub async fn resolve_unresolved(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<ResolveUnresolvedBody>,
+) -> Result<Json<Value>, ApiError> {
+    let out = vi_pipeline::resolve_unresolved(
+        &st.pool,
+        &st.ledger,
+        id,
+        &body.resolution,
+        body.notes.as_deref(),
+    )
+    .await?;
+    Ok(Json(out))
+}
+
 pub async fn wall(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
     let entries = vi_reckoning::wall(&st.pool).await?;
     Ok(Json(json!({

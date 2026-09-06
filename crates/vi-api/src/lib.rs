@@ -4,6 +4,7 @@
 pub mod constitution;
 pub mod error;
 pub mod handlers;
+pub mod meta;
 pub mod reckoning;
 
 use axum::{
@@ -17,6 +18,26 @@ pub fn router(state: AppState) -> Router {
         .route("/health", get(handlers::health))
         .route("/ready", get(handlers::ready))
         .route("/engines", get(handlers::engines))
+        // Transparency proof log: audit artifacts over the published dataset.
+        .route("/transparency/snapshot", post(meta::snapshot_trigger))
+        .route("/transparency/snapshots", get(meta::snapshot_list))
+        .route("/transparency/snapshots/latest", get(meta::snapshot_latest))
+        .route("/transparency/proof/:table/:row_id", get(meta::inclusion_proof))
+        .route("/transparency/verify", post(meta::verify_proof))
+        // Resonance / drift / capture: pending machine-derived leads. Not in
+        // the public proxy allowlist; operators and counsel only.
+        .route("/resonance/compute", post(meta::resonance_compute))
+        .route("/resonance/cases", get(meta::resonance_cases))
+        .route("/resonance/case/:id", get(meta::resonance_case))
+        .route("/drift/ingest", post(meta::drift_ingest))
+        .route(
+            "/drift/detect/:court_id/:clause_id",
+            post(meta::drift_detect),
+        )
+        .route("/drift/changepoints", get(meta::drift_changepoints))
+        .route("/capture/rebuild", post(meta::capture_rebuild))
+        .route("/capture/compute", post(meta::capture_compute))
+        .route("/capture/outliers", get(meta::capture_outliers))
         .route("/cases/search", get(handlers::search))
         .route("/cases/:id", get(handlers::case_context))
         .route("/prosecutors/:id/stats", get(handlers::prosecutor_stats))
@@ -28,6 +49,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/rules/run", post(handlers::run_rules))
         .route("/flags", get(handlers::list_flags))
+        .route("/flags/:id/review", post(handlers::review_flag))
         .route("/simulate", post(handlers::simulate))
         .route(
             "/simulate/from-case/:case_id",
@@ -94,6 +116,10 @@ pub fn router(state: AppState) -> Router {
             "/constitution/screen/:case_id",
             get(constitution::screen_report).post(constitution::screen_run),
         )
+        .route(
+            "/constitution/screens/:id/review",
+            post(constitution::screen_review),
+        )
         .route("/reckoning/actors", get(reckoning::list_actors))
         .route("/reckoning/actors/:id", get(reckoning::get_actor))
         .route(
@@ -110,6 +136,14 @@ pub fn router(state: AppState) -> Router {
         .route("/reckoning/renormalize", post(reckoning::renormalize))
         .route("/reckoning/packages", get(reckoning::list_packages))
         .route("/reckoning/packages/:id", get(reckoning::get_package))
+        .route(
+            "/reckoning/packages/:id/transition",
+            post(reckoning::transition_package),
+        )
+        .route(
+            "/reckoning/unresolved/:id/resolve",
+            post(reckoning::resolve_unresolved),
+        )
         .route("/reckoning/wall", get(reckoning::wall))
         .route("/reckoning/wall/:id", get(reckoning::wall_profile))
         .route("/reckoning/tracker", get(reckoning::tracker))

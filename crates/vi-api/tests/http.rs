@@ -91,6 +91,10 @@ async fn all_engines_wired_over_http() {
         "vi-trial-penalty",
         "vi-constitution",
         "vi-reckoning",
+        "vi-transparency",
+        "vi-resonance",
+        "vi-drift",
+        "vi-capture",
     ] {
         assert!(
             listed.contains(&expected),
@@ -99,7 +103,7 @@ async fn all_engines_wired_over_http() {
     }
     assert_eq!(
         listed.len(),
-        15,
+        19,
         "unexpected engine in /engines: {listed:?}"
     );
 

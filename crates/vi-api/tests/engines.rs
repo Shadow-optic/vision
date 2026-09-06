@@ -38,7 +38,7 @@ async fn migrate_seed_and_engines() {
 
     let entry = ledger
         .append(
-            vi_ledger::events::CORRECTION_ISSUED,
+            vi_ledger::events::FLAG_REVIEWED,
             &json!({"test": true, "case_id": case_id}),
         )
         .await

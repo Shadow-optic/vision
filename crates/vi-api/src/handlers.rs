@@ -151,7 +151,40 @@ pub async fn case_context(
     let ctx = vi_db::case_context(&st.pool, id)
         .await?
         .ok_or_else(ApiError::not_found)?;
-    Ok(Json(ctx))
+    Ok(Json(redact_public_case(ctx)))
+}
+
+/// Salt for pseudonymizing restricted fields. A deployment secret set via
+/// `VI_PSEUDONYM_SALT`; the built-in default keeps local development working
+/// and is not a secret, so pseudonyms from a default-salt deployment must be
+/// treated as deterministic, not anonymous.
+fn pseudonym_salt() -> String {
+    std::env::var("VI_PSEUDONYM_SALT")
+        .ok()
+        .filter(|s| !s.is_empty())
+        .unwrap_or_else(|| "vi-public-case/v1".to_string())
+}
+
+/// `defendant_race` is a restricted attribute (0001_core.sql: "pseudonymized
+/// in public views"), and this route is in the public proxy allowlist. The raw
+/// value never leaves through this handler; callers get a salted BLAKE3
+/// pseudonym so records can be correlated without exposing the attribute.
+/// Internal consumers (the pipeline, TrustScript evaluation) read
+/// `vi_db::case_context` directly and are unaffected.
+pub fn redact_public_case(mut ctx: Value) -> Value {
+    if let Some(case) = ctx.pointer_mut("/case").and_then(Value::as_object_mut) {
+        if let Some(race) = case.remove("defendant_race") {
+            if let Some(race) = race.as_str() {
+                let mut h = blake3::Hasher::new();
+                h.update(pseudonym_salt().as_bytes());
+                h.update(b"|");
+                h.update(race.as_bytes());
+                let hex = h.finalize().to_hex().to_string();
+                case.insert("defendant_race_pseudonym".into(), json!(&hex[..16]));
+            }
+        }
+    }
+    ctx
 }
 
 // ---------- prosecutor stats ----------
@@ -398,6 +431,36 @@ pub async fn list_flags(
     Ok(Json(json!({ "flags": rows })))
 }
 
+#[derive(Deserialize)]
+pub struct FlagReviewBody {
+    /// `substantiate` or `reject`.
+    pub action: String,
+    pub notes: Option<String>,
+}
+
+/// Counsel review gate for an automated abuse flag. Substantiation is what
+/// lets a flag count toward an Abuse Score and the Wall; it also recomputes
+/// the scores of the individuals the flag is linked to, so the review takes
+/// effect immediately and auditably.
+pub async fn review_flag(
+    State(st): State<AppState>,
+    Path(id): Path<Uuid>,
+    Json(body): Json<FlagReviewBody>,
+) -> Result<Json<Value>, ApiError> {
+    let status = match body.action.as_str() {
+        "substantiate" => "substantiated",
+        "reject" => "rejected",
+        other => {
+            return Err(ApiError::bad_req(format!(
+                "unknown action '{other}'; expected 'substantiate' or 'reject'"
+            )))
+        }
+    };
+    let out = vi_pipeline::review_flag(&st.pool, &st.ledger, id, status, body.notes.as_deref())
+        .await?;
+    Ok(Json(out))
+}
+
 // ---------- zero-day simulation ----------
 
 #[derive(Deserialize)]
@@ -523,19 +586,32 @@ pub async fn simulate_from_case(
 
     let (office_conviction, mean_plea, mean_trial): (Option<f64>, Option<f64>, Option<f64>) =
         if let Some(office) = row.office.as_deref() {
-            sqlx::query_as(
-                "SELECT
-                   (COUNT(*) FILTER (WHERE outcome = 'conviction')::float8
-                     / NULLIF(COUNT(*) FILTER (WHERE outcome IS NOT NULL), 0)) AS conviction_rate,
-                   AVG(sentence_months::float8) FILTER (WHERE plea_accepted) AS mean_plea,
-                   AVG(sentence_months::float8) FILTER (WHERE NOT plea_accepted AND outcome = 'conviction') AS mean_trial
-                 FROM court_cases c
-                 JOIN prosecutors p ON p.prosecutor_id = c.prosecutor_id
-                 WHERE p.office = $1",
+            // Prefer the stored aggregates the pipeline's sim_calibration stage
+            // refreshes; compute live only for an office the pipeline has never
+            // refreshed, so the two paths cannot drift apart on refreshed data.
+            let stored: Option<(Option<f64>, Option<f64>, Option<f64>)> = sqlx::query_as(
+                "SELECT conviction_rate, mean_plea_months, mean_trial_months
+                 FROM office_sim_stats WHERE office = $1",
             )
             .bind(office)
-            .fetch_one(&st.pool)
-            .await?
+            .fetch_optional(&st.pool)
+            .await?;
+            match stored {
+                Some(s) => s,
+                None => sqlx::query_as(
+                    "SELECT
+                       (COUNT(*) FILTER (WHERE outcome = 'conviction')::float8
+                         / NULLIF(COUNT(*) FILTER (WHERE outcome IS NOT NULL), 0)) AS conviction_rate,
+                       AVG(sentence_months::float8) FILTER (WHERE plea_accepted) AS mean_plea,
+                       AVG(sentence_months::float8) FILTER (WHERE NOT plea_accepted AND outcome = 'conviction') AS mean_trial
+                     FROM court_cases c
+                     JOIN prosecutors p ON p.prosecutor_id = c.prosecutor_id
+                     WHERE p.office = $1",
+                )
+                .bind(office)
+                .fetch_one(&st.pool)
+                .await?,
+            }
         } else {
             (None, None, None)
         };
@@ -1080,7 +1156,7 @@ pub struct PipelineRun {
     pub limit: Option<i64>,
 }
 
-/// Walk ingested records through every engine. Produces pending artifacts only.
+/// Walk ingested records through the pipeline stages. Produces pending artifacts only.
 pub async fn pipeline_run(
     State(st): State<AppState>,
     Json(body): Json<PipelineRun>,
@@ -1155,6 +1231,18 @@ pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError
     let pipeline_runs: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM pipeline_runs")
         .fetch_one(&st.pool)
         .await?;
+    let snapshots: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM transparency_snapshots")
+        .fetch_one(&st.pool)
+        .await?;
+    let resonance: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM case_resonance")
+        .fetch_one(&st.pool)
+        .await?;
+    let changepoints: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM drift_changepoints")
+        .fetch_one(&st.pool)
+        .await?;
+    let capture_metrics: i64 = sqlx::query_scalar("SELECT COUNT(*) FROM capture_metrics")
+        .fetch_one(&st.pool)
+        .await?;
 
     Ok(Json(json!({
         "backend": "vi-api",
@@ -1169,7 +1257,7 @@ pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError
             {"name": "Tactics DB", "crate": "vi-tactics", "rows": tactics,
              "routes": ["/tactics", "/tactics/:id", "/tactics/:id/stats"]},
             {"name": "Abuse detection", "crate": "vi-trustscript", "rows": rules,
-             "routes": ["/rules", "/rules/run", "/flags"]},
+             "routes": ["/rules", "/rules/run", "/flags", "/flags/:id/review"]},
             {"name": "Zero-day sim", "crate": "vi-sim", "rows": sims,
              "routes": ["/simulate", "/simulate/from-case/:case_id"]},
             {"name": "H3 intelligence", "crate": "vi-geo", "rows": h3,
@@ -1189,7 +1277,15 @@ pub async fn engines(State(st): State<AppState>) -> Result<Json<Value>, ApiError
             {"name": "Constitution / Bill of Rights", "crate": "vi-constitution", "rows": provisions,
              "routes": ["/constitution", "/constitution/options", "/constitution/jurisdictions", "/constitution/provisions", "/constitution/resolve", "/constitution/screen/:case_id"]},
             {"name": "Reckoning / individual accountability", "crate": "vi-reckoning", "rows": actors,
-             "routes": ["/reckoning/actors", "/reckoning/resolve", "/reckoning/actors/:id/package", "/reckoning/wall", "/reckoning/wall/:id", "/reckoning/statutes"]}
+             "routes": ["/reckoning/actors", "/reckoning/resolve", "/reckoning/actors/:id/package", "/reckoning/packages/:id/transition", "/reckoning/unresolved/:id/resolve", "/reckoning/wall", "/reckoning/wall/:id", "/reckoning/statutes"]},
+            {"name": "Transparency proof log", "crate": "vi-transparency", "rows": snapshots,
+             "routes": ["/transparency/snapshot", "/transparency/snapshots", "/transparency/snapshots/latest", "/transparency/proof/:table/:row_id", "/transparency/verify"]},
+            {"name": "Weak-signal resonance", "crate": "vi-resonance", "rows": resonance,
+             "routes": ["/resonance/compute", "/resonance/cases", "/resonance/case/:id"]},
+            {"name": "Doctrinal drift", "crate": "vi-drift", "rows": changepoints,
+             "routes": ["/drift/ingest", "/drift/detect/:court_id/:clause_id", "/drift/changepoints"]},
+            {"name": "Structural capture", "crate": "vi-capture", "rows": capture_metrics,
+             "routes": ["/capture/rebuild", "/capture/compute", "/capture/outliers"]}
         ]
     })))
 }
