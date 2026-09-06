@@ -2432,6 +2432,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "axum",
+ "blake3",
  "chrono",
  "dotenvy",
  "reqwest",
@@ -2445,9 +2446,11 @@ dependencies = [
  "tracing-subscriber",
  "uuid",
  "vi-brady-recon",
+ "vi-capture",
  "vi-constitution",
  "vi-correlation",
  "vi-db",
+ "vi-drift",
  "vi-geo",
  "vi-ingest",
  "vi-lasm",
@@ -2455,8 +2458,10 @@ dependencies = [
  "vi-monell-atlas",
  "vi-pipeline",
  "vi-reckoning",
+ "vi-resonance",
  "vi-sim",
  "vi-tactics",
+ "vi-transparency",
  "vi-trial-penalty",
  "vi-trustscript",
 ]
@@ -2473,6 +2478,24 @@ dependencies = [
  "sqlx",
  "thiserror 1.0.69",
  "uuid",
+ "vi-ledger",
+]
+
+[[package]]
+name = "vi-capture"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rand 0.8.7",
+ "rand_chacha",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
+ "vi-db",
+ "vi-drift",
  "vi-ledger",
 ]
 
@@ -2507,6 +2530,24 @@ dependencies = [
  "thiserror 1.0.69",
  "uuid",
  "vi-constitution",
+]
+
+[[package]]
+name = "vi-drift"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "rand 0.8.7",
+ "rand_chacha",
+ "rand_distr",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
+ "vi-db",
+ "vi-ledger",
 ]
 
 [[package]]
@@ -2589,10 +2630,17 @@ dependencies = [
  "tracing",
  "uuid",
  "vi-brady-recon",
+ "vi-capture",
  "vi-constitution",
+ "vi-correlation",
  "vi-db",
+ "vi-drift",
  "vi-ledger",
+ "vi-monell-atlas",
  "vi-reckoning",
+ "vi-resonance",
+ "vi-tactics",
+ "vi-trial-penalty",
  "vi-trustscript",
 ]
 
@@ -2607,6 +2655,21 @@ dependencies = [
  "sqlx",
  "thiserror 1.0.69",
  "uuid",
+ "vi-ledger",
+]
+
+[[package]]
+name = "vi-resonance"
+version = "0.1.0"
+dependencies = [
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
+ "vi-geo",
  "vi-ledger",
 ]
 
@@ -2630,6 +2693,22 @@ dependencies = [
  "thiserror 1.0.69",
  "uuid",
  "vi-ledger",
+]
+
+[[package]]
+name = "vi-transparency"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "chrono",
+ "serde",
+ "serde_json",
+ "sqlx",
+ "thiserror 1.0.69",
+ "tokio",
+ "uuid",
+ "vi-ledger",
+ "vi-reckoning",
 ]
 
 [[package]]
