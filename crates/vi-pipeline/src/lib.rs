@@ -352,11 +352,16 @@ pub async fn run_case(
 
     // --- 5. Actor links ---------------------------------------------------
     match link_actors(pool, ledger, case_id, &header).await {
-        Ok(linked) => {
-            actors_linked = linked.len() as i32;
+        Ok(outcome) => {
+            actors_linked = outcome.linked.len() as i32;
             stages.push(StageOutcome::ok(
                 "actor_links",
-                json!({ "linked": linked }),
+                json!({
+                    "linked": outcome.linked,
+                    "unresolved": outcome.unresolved,
+                    "note": "A field naming no readable individual is queued for a \
+                             human rather than resolved by guess.",
+                }),
             ));
         }
         Err(e) => stages.push(StageOutcome::failed("actor_links", &e.to_string())),
@@ -557,13 +562,20 @@ pub async fn run_rules_for_case(
 ///
 /// Only public-record identity fields are used. Resolution creates an identity;
 /// it does not create an allegation.
+/// Individuals a record named, and fields that named none readably.
+#[derive(Debug, Default)]
+struct ActorLinks {
+    linked: Vec<Value>,
+    unresolved: Vec<Value>,
+}
+
 async fn link_actors(
     pool: &PgPool,
     ledger: &Ledger,
     case_id: Uuid,
     header: &CaseHeader,
-) -> Result<Vec<Value>, Error> {
-    let mut linked = Vec::new();
+) -> Result<ActorLinks, Error> {
+    let mut out = ActorLinks::default();
 
     if let (Some(pid), Some(office)) = (header.prosecutor_id, header.office.clone()) {
         let name: Option<String> =
@@ -584,7 +596,7 @@ async fn link_actors(
             )
             .await?
             {
-                linked.push(entry);
+                out.linked.push(entry);
             }
         }
     }
@@ -595,23 +607,120 @@ async fn link_actors(
         .map(str::trim)
         .filter(|s| !s.is_empty())
     {
-        if let Some(entry) = resolve_and_link(
-            pool,
-            ledger,
-            case_id,
-            &header.jurisdiction,
-            "judge",
-            judge.to_string(),
-            None,
-            None,
-        )
-        .await?
-        {
-            linked.push(entry);
+        // A judge field may name a whole panel. Each member is an individual
+        // and is linked as one; a field that cannot be read as individuals is
+        // queued for a human instead of being guessed at.
+        match vi_reckoning::parse_officials(judge) {
+            vi_reckoning::Officials::Individuals(names) => {
+                for name in names {
+                    if let Some(entry) = resolve_and_link(
+                        pool,
+                        ledger,
+                        case_id,
+                        &header.jurisdiction,
+                        "judge",
+                        name,
+                        None,
+                        None,
+                    )
+                    .await?
+                    {
+                        out.linked.push(entry);
+                    }
+                }
+            }
+            vi_reckoning::Officials::Ambiguous { reason } => {
+                record_unresolved(pool, case_id, "judge", judge, "ambiguous", &reason).await?;
+                out.unresolved.push(json!({
+                    "role": "judge",
+                    "raw_value": judge,
+                    "kind": "ambiguous",
+                    "reason": reason,
+                }));
+            }
+            vi_reckoning::Officials::Collective { reason } => {
+                record_unresolved(pool, case_id, "judge", judge, "collective", &reason).await?;
+                out.unresolved.push(json!({
+                    "role": "judge",
+                    "raw_value": judge,
+                    "kind": "collective",
+                    "reason": reason,
+                }));
+            }
         }
     }
 
-    Ok(linked)
+    Ok(out)
+}
+
+/// Judge and counsel fields that named no readable individual.
+///
+/// An ambiguous entry is a question for a human: which individuals does this
+/// field name? Until someone answers, nobody is named and nobody accrues a
+/// record from it.
+pub async fn unresolved_officials(
+    pool: &PgPool,
+    include_resolved: bool,
+) -> Result<Value, Error> {
+    let rows = sqlx::query_scalar::<_, Value>(
+        "SELECT COALESCE(jsonb_agg(x ORDER BY x->>'first_seen_at' DESC), '[]'::jsonb) FROM (
+            SELECT jsonb_build_object(
+                     'unresolved_id', u.unresolved_id,
+                     'case_id', u.case_id,
+                     'docket_number', c.docket_number,
+                     'jurisdiction', c.jurisdiction,
+                     'role_in_case', u.role_in_case,
+                     'raw_value', u.raw_value,
+                     'reason_kind', u.reason_kind,
+                     'reason', u.reason,
+                     'source_url', c.source_url,
+                     'resolved_at', u.resolved_at,
+                     'resolution', u.resolution,
+                     'first_seen_at', u.first_seen_at) AS x
+              FROM unresolved_officials u
+              JOIN court_cases c ON c.case_id = u.case_id
+             WHERE $1 OR u.resolved_at IS NULL
+             ORDER BY u.first_seen_at DESC
+             LIMIT 500) t",
+    )
+    .bind(include_resolved)
+    .fetch_one(pool)
+    .await?;
+
+    Ok(json!({
+        "entries": rows,
+        "note": "Nothing listed here is attributed to any individual. An ambiguous \
+                 field names several officials and the text does not say where one \
+                 name ends; only a human can close it.",
+    }))
+}
+
+/// Park a judge or counsel field that names no readable individual.
+///
+/// Nothing here is attributed to anyone. An ambiguous entry is a question for a
+/// human; a collective one records that the court acted as a body.
+async fn record_unresolved(
+    pool: &PgPool,
+    case_id: Uuid,
+    role_in_case: &str,
+    raw_value: &str,
+    reason_kind: &str,
+    reason: &str,
+) -> Result<(), Error> {
+    sqlx::query(
+        "INSERT INTO unresolved_officials
+           (case_id, role_in_case, raw_value, reason_kind, reason)
+         VALUES ($1,$2,$3,$4,$5)
+         ON CONFLICT (case_id, role_in_case, raw_value) DO NOTHING",
+    )
+    .bind(case_id)
+    .bind(role_in_case)
+    .bind(raw_value)
+    .bind(reason_kind)
+    .bind(reason)
+    .execute(pool)
+    .await?;
+    Ok(())
 }
 
 #[allow(clippy::too_many_arguments)]
@@ -734,9 +843,22 @@ pub async fn status(pool: &PgPool) -> Result<Value, Error> {
     .fetch_one(pool)
     .await?;
 
+    let unresolved = sqlx::query_scalar::<_, Value>(
+        "SELECT jsonb_build_object(
+                  'open_ambiguous', COUNT(*) FILTER (
+                      WHERE reason_kind = 'ambiguous' AND resolved_at IS NULL),
+                  'open_collective', COUNT(*) FILTER (
+                      WHERE reason_kind = 'collective' AND resolved_at IS NULL),
+                  'closed', COUNT(*) FILTER (WHERE resolved_at IS NOT NULL))
+           FROM unresolved_officials",
+    )
+    .fetch_one(pool)
+    .await?;
+
     Ok(json!({
         "cases": { "total": total, "awaiting_pipeline": pending },
         "runs_by_status": by_status,
+        "unresolved_officials": unresolved,
         "totals": totals,
         "recent": recent,
         "stages": [

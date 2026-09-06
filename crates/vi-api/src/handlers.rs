@@ -1020,6 +1020,11 @@ pub async fn ingest_sources(State(st): State<AppState>) -> Result<Json<Value>, A
     Ok(Json(vi_ingest::list_sources(&st.pool).await?))
 }
 
+/// Place cases whose court could not be resolved when they were ingested.
+pub async fn ingest_place_courts(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
+    Ok(Json(vi_ingest::backfill_unplaced_courts(&st.pool).await?))
+}
+
 #[derive(Deserialize)]
 pub struct PipelineRun {
     /// One case, or every case still awaiting the pipeline.
@@ -1046,6 +1051,22 @@ pub async fn pipeline_run(
 
 pub async fn pipeline_status(State(st): State<AppState>) -> Result<Json<Value>, ApiError> {
     Ok(Json(vi_pipeline::status(&st.pool).await?))
+}
+
+#[derive(Deserialize)]
+pub struct UnresolvedQuery {
+    #[serde(default)]
+    pub include_resolved: bool,
+}
+
+/// Judge and counsel fields the pipeline refused to guess at.
+pub async fn pipeline_unresolved(
+    State(st): State<AppState>,
+    Query(q): Query<UnresolvedQuery>,
+) -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        vi_pipeline::unresolved_officials(&st.pool, q.include_resolved).await?,
+    ))
 }
 
 // ---------- Engine catalog ----------

@@ -47,8 +47,13 @@ pub fn router(state: AppState) -> Router {
         .route("/ingest/run", post(handlers::ingest_run))
         .route("/ingest/status", get(handlers::ingest_status))
         .route("/ingest/sources", get(handlers::ingest_sources))
+        .route("/ingest/place-courts", post(handlers::ingest_place_courts))
         .route("/pipeline/run", post(handlers::pipeline_run))
         .route("/pipeline/status", get(handlers::pipeline_status))
+        .route(
+            "/pipeline/unresolved-officials",
+            get(handlers::pipeline_unresolved),
+        )
         .route("/atlas/findings", post(handlers::atlas_create_finding))
         .route(
             "/atlas/findings/:id/review",
@@ -102,6 +107,7 @@ pub fn router(state: AppState) -> Router {
         .route("/reckoning/actors/:id/publish", post(reckoning::publish))
         .route("/reckoning/resolve", post(reckoning::resolve))
         .route("/reckoning/sync", post(reckoning::sync))
+        .route("/reckoning/renormalize", post(reckoning::renormalize))
         .route("/reckoning/packages", get(reckoning::list_packages))
         .route("/reckoning/packages/:id", get(reckoning::get_package))
         .route("/reckoning/wall", get(reckoning::wall))
