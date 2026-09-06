@@ -21,15 +21,23 @@ const DOMAIN: &[u8] = b"VI-Ledger/v1";
 
 pub mod events {
     pub const CASE_INGESTED: &str = "CaseIngested";
+    /// A case's disposition fields were folded into the office-level
+    /// trial-penalty distributions (vi-pipeline `trial_penalty` stage).
     pub const CASE_DISPOSITION: &str = "CaseDisposition";
-    pub const PROSECUTOR_ACTION: &str = "ProsecutorAction";
-    pub const BRADY_FLAG: &str = "BradyViolationFlag";
     pub const ABUSE_FLAG: &str = "AbuseFlag";
+    /// Counsel substantiated or rejected an abuse flag.
+    pub const FLAG_REVIEWED: &str = "AbuseFlagReviewed";
     pub const SIMULATION_RESULT: &str = "SimulationResult";
     pub const RULE_CREATED: &str = "RuleCreated";
-    pub const CORRECTION_ISSUED: &str = "CorrectionIssued";
     pub const CONSTITUTIONAL_FINDING: &str = "ConstitutionalFinding";
     pub const FINDING_REVIEWED: &str = "FindingReviewed";
+    /// Counsel substantiated or rejected a constitution screen.
+    pub const SCREEN_REVIEWED: &str = "ConstitutionScreenReviewed";
+    /// A human closed an unresolved-officials queue entry.
+    pub const OFFICIAL_RESOLVED: &str = "UnresolvedOfficialResolved";
+    /// A tactic-catalog signal was observed in a case's public text
+    /// (pending occurrence; an observation, not an accusation).
+    pub const TACTIC_OCCURRENCE: &str = "TacticOccurrenceMatched";
     pub const DISCLOSED_EVIDENCE: &str = "DisclosedEvidenceItem";
     pub const BRADY_RECON: &str = "BradyReconRun";
     pub const TRIAL_PENALTY_SNAPSHOT: &str = "TrialPenaltySnapshot";
@@ -39,6 +47,9 @@ pub mod events {
     pub const ACTOR_RESOLVED: &str = "ActorResolved";
     pub const ABUSE_SCORE: &str = "AbuseScoreComputed";
     pub const LEGAL_PACKAGE: &str = "LegalActionPackage";
+    /// A legal-action package moved along draft -> attorney_reviewed ->
+    /// referred.
+    pub const PACKAGE_TRANSITION: &str = "PackageTransition";
     pub const PUBLICATION_REVIEWED: &str = "PublicationReviewed";
     pub const PIPELINE_RUN: &str = "PipelineRun";
 }

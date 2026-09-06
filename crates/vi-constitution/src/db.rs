@@ -19,6 +19,10 @@ pub enum Error {
     Ledger(#[from] vi_ledger::Error),
     #[error("case not found")]
     NotFound,
+    #[error("screen not found")]
+    ScreenNotFound,
+    #[error("invalid review status: {0}")]
+    InvalidStatus(String),
     #[error("unknown jurisdiction: {0}")]
     UnknownJurisdiction(String),
     #[error("render: {0}")]
@@ -414,6 +418,44 @@ pub async fn screen_case(
         .await?;
 
     Ok((screen_id, report, md))
+}
+
+/// Counsel review of a constitution screen: `substantiated` or `rejected`.
+/// Mirrors the atlas finding review: a screen is a machine-generated lead
+/// until a human reads it, and the decision is ledger-chained.
+pub async fn review_screen(
+    pool: &PgPool,
+    ledger: &Ledger,
+    screen_id: Uuid,
+    status: &str,
+    notes: Option<&str>,
+) -> Result<(), Error> {
+    if !matches!(status, "substantiated" | "rejected") {
+        return Err(Error::InvalidStatus(status.to_string()));
+    }
+    let row: Option<(Option<Uuid>,)> = sqlx::query_as(
+        "UPDATE constitution_screens
+         SET review_status=$1, reviewed_at=now(), review_notes=$2
+         WHERE screen_id=$3
+         RETURNING case_id",
+    )
+    .bind(status)
+    .bind(notes)
+    .bind(screen_id)
+    .fetch_optional(pool)
+    .await?;
+
+    let Some((case_id,)) = row else {
+        return Err(Error::ScreenNotFound);
+    };
+
+    ledger
+        .append(
+            vi_ledger::events::SCREEN_REVIEWED,
+            &json!({ "screen_id": screen_id, "case_id": case_id, "status": status, "notes": notes }),
+        )
+        .await?;
+    Ok(())
 }
 
 pub async fn latest_screen(

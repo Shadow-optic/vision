@@ -12,10 +12,17 @@ thiserror = { workspace = true }
 tracing = { workspace = true }
 uuid = { workspace = true }
 vi-brady-recon = { path = "../vi-brady-recon" }
+vi-capture = { path = "../vi-capture" }
 vi-constitution = { path = "../vi-constitution" }
+vi-correlation = { path = "../vi-correlation" }
 vi-db = { path = "../vi-db" }
+vi-drift = { path = "../vi-drift" }
 vi-ledger = { path = "../vi-ledger" }
+vi-monell-atlas = { path = "../vi-monell-atlas" }
 vi-reckoning = { path = "../vi-reckoning" }
+vi-resonance = { path = "../vi-resonance" }
+vi-tactics = { path = "../vi-tactics" }
+vi-trial-penalty = { path = "../vi-trial-penalty" }
 vi-trustscript = { path = "../vi-trustscript" }
 
 [dev-dependencies]

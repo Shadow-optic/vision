@@ -148,6 +148,33 @@ pub async fn office_fingerprint(
     })
 }
 
+/// Recompute an office's fingerprint and store it as the office's current
+/// fingerprint row. The pipeline calls this after a case in the office is
+/// ingested so the stored fingerprint is durable and auditable rather than a
+/// warm-up nobody can inspect. The fingerprint reflects counsel-substantiated
+/// findings only; an office with none gets an honest zero-count row.
+pub async fn refresh_office_fingerprint(
+    pool: &PgPool,
+    office: &str,
+    jurisdiction: Option<&str>,
+) -> Result<Fingerprint, sqlx::Error> {
+    let fp = office_fingerprint(pool, office, jurisdiction).await?;
+    sqlx::query(
+        "INSERT INTO monell_fingerprints (office, jurisdiction, fingerprint)
+         VALUES ($1,$2,$3)
+         ON CONFLICT (office) DO UPDATE SET
+            jurisdiction = EXCLUDED.jurisdiction,
+            fingerprint = EXCLUDED.fingerprint,
+            computed_at = now()",
+    )
+    .bind(office)
+    .bind(jurisdiction)
+    .bind(serde_json::json!(&fp))
+    .execute(pool)
+    .await?;
+    Ok(fp)
+}
+
 fn compare(r: &TypeRaw, n_office: i64, n_state: i64) -> TypeCompare {
     let o_rate = if n_office > 0 {
         r.office_count as f64 / n_office as f64 * 1000.0
