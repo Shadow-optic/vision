@@ -61,6 +61,9 @@ pub enum Error {
 }
 
 pub use dashboard::{set_publication, tracker, wall, wall_profile, TrackerRow, WallEntry};
-pub use entity::{list, resolve, sync_from_public_records, Actor, ResolveHit, ResolveQuery};
+pub use entity::{
+    list, parse_officials, renormalize, resolve, sync_from_public_records, Actor, Officials,
+    ResolveHit, ResolveQuery,
+};
 pub use package::{generate, get_package, list_packages, StoredPackage};
 pub use score::{score_actor, AbuseScore};
